@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Routing Table Comparison Report - {{ chg_number }}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; background: #f8fafc; margin: 0; padding: 24px; }
+    .container { max-width: 960px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+    .header { background: #0f172a; color: #f8fafc; padding: 20px 28px; }
+    .header h1 { margin: 0 0 6px 0; font-size: 20px; }
+    .header p { margin: 0; font-size: 13px; color: #cbd5e1; }
+    .content { padding: 24px 28px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
+    .badge-CRITICAL { background: #fee2e2; color: #991b1b; }
+    .badge-HIGH { background: #ffedd5; color: #9a3412; }
+    .badge-MEDIUM { background: #fef9c3; color: #854d0e; }
+    .badge-LOW { background: #dbeafe; color: #1e40af; }
+    .badge-INFO { background: #e0f2fe; color: #075985; }
+    .badge-PASS { background: #dcfce7; color: #166534; }
+    .badge-removed { background: #fee2e2; color: #b91c1c; }
+    .badge-added { background: #dcfce7; color: #15803d; }
+    .badge-changed { background: #fef3c7; color: #b45309; }
+    .device-section { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 24px; padding: 18px; }
+    .stats-grid { width: 100%; border-collapse: collapse; margin: 12px 0 18px 0; }
+    .stats-grid td { border: 1px solid #e2e8f0; padding: 10px 14px; text-align: center; background: #f8fafc; }
+    .stat-num { font-size: 20px; font-weight: 700; color: #0f172a; display: block; }
+    .stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .section-title { font-size: 15px; font-weight: 700; margin: 18px 0 8px 0; padding-bottom: 6px; border-bottom: 2px solid #e2e8f0; }
+    .section-title.critical { color: #991b1b; border-bottom-color: #fca5a5; }
+    table.diff-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+    table.diff-table th { background: #f1f5f9; color: #334155; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; }
+    table.diff-table td { padding: 8px 10px; border: 1px solid #e2e8f0; vertical-align: top; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 600; }
+    .reason-pill { display: inline-block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 4px; padding: 1px 6px; font-size: 11px; margin: 2px 4px 2px 0; }
+    .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 14px 28px; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Routing Table Comparison &amp; Analysis Report</h1>
+      <p>
+        Change: <strong>{{ chg_number }}</strong> — {{ change_title }} &nbsp;|&nbsp;
+        Engineer: {{ engineer_name }} ({{ recipient_email }}) &nbsp;|&nbsp;
+        Overall Risk: <span class="badge badge-{{ overall_risk }}">{{ overall_risk }}</span>
+      </p>
+    </div>
+
+    <div class="content">
+      {% for report in reports %}
+      {% set stats = report.summary_stats %}
+      <div class="device-section">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="margin:0; font-size:17px;">
+            Device: <span class="mono">{{ report.device_label }}</span>
+            &nbsp;<span class="badge badge-{{ report.risk_level }}">{{ report.risk_level }}</span>
+          </h2>
+        </div>
+        <p style="margin:8px 0 12px 0; font-size:13px; color:#334155;">{{ report.executive_summary }}</p>
+
+        <table class="stats-grid">
+          <tr>
+            <td><span class="stat-num" style="color:#b91c1c;">{{ stats.removed_count }}</span><span class="stat-label">Removed</span></td>
+            <td><span class="stat-num" style="color:#15803d;">{{ stats.added_count }}</span><span class="stat-label">Added</span></td>
+            <td><span class="stat-num" style="color:#b45309;">{{ stats.changed_count }}</span><span class="stat-label">Changed</span></td>
+            <td><span class="stat-num" style="color:#991b1b;">{{ stats.important_count }}</span><span class="stat-label">Important Alerts</span></td>
+            <td><span class="stat-num">{{ stats.before_unique_prefixes }} &rarr; {{ stats.after_unique_prefixes }}</span><span class="stat-label">Unique Prefixes</span></td>
+          </tr>
+        </table>
+
+        <div class="section-title critical">
+          1. Emphasized Important Routing Differences (Mask &lt;= /{{ stats.large_prefix_threshold }} or Pre-Specified) — {{ report.important_entries | length }}
+        </div>
+        {% if report.important_entries %}
+        <table class="diff-table">
+          <thead>
+            <tr>
+              <th>Prefix (VRF)</th>
+              <th>Change</th>
+              <th>Severity</th>
+              <th>Trigger &amp; Network Analysis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in report.important_entries %}
+            <tr style="background:#fffafa;">
+              <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
+              <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
+              <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
+              <td>
+                {% for reason in item.importance_reasons %}
+                <span class="reason-pill">{{ reason }}</span>
+                {% endfor %}
+                <div style="margin-top:4px; color:#1e293b;">{{ item.explanation }}</div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p style="font-size:13px; color:#15803d;">No important routing entries were removed or modified.</p>
+        {% endif %}
+
+        <div class="section-title">
+          2. Normal Routing Table Differences — {{ report.normal_entries | length }}
+        </div>
+        {% if report.normal_entries %}
+        <table class="diff-table">
+          <thead>
+            <tr>
+              <th>Prefix (VRF)</th>
+              <th>Change</th>
+              <th>Severity</th>
+              <th>Analysis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in report.normal_entries %}
+            <tr>
+              <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
+              <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
+              <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
+              <td>{{ item.explanation }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p style="font-size:13px; color:#64748b;">No additional normal routing differences.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="footer">
+      Generated automatically by <strong>NetRoute Guardian</strong> at {{ generated_at }}.
+    </div>
+  </div>
+</body>
+</html>

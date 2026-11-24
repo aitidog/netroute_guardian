@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: netroute-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-route_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-route_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-route_table_mgm}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-route_user} -d ${POSTGRES_DB:-route_table_mgm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: netroute-mailpit
+    ports:
+      - "1025:1025"   # SMTP server
+      - "8025:8025"   # Web UI to inspect delivered HTML emails
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: netroute-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-route_user}:${POSTGRES_PASSWORD:-route_pass}@postgres:5432/${POSTGRES_DB:-route_table_mgm}
+      SERVICENOW_MODE: ${SERVICENOW_MODE:-mock}
+      SCHEDULER_ENABLED: "true"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MAILPIT_WEB_URL: http://localhost:8025
+      MAX_CONCURRENT_DEVICE_COLLECTIONS: "10"
+      PIPELINE_EXECUTOR_MODE: process
+      PIPELINE_MAX_WORKERS: "4"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: netroute-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:

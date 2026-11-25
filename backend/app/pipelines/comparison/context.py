@@ -64,7 +64,9 @@ class RouteDiffEntry:
     # Stage 4: Network semantics analysis
     severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] = "LOW"
     affected_ip_count: int = 0
-    fallback_status: str | None = None  # default_or_blackhole | parent_same_egress | parent_different_egress
+    # no_covering_supernet | covering_supernet_egress_unknown |
+    # covering_supernet_same_next_hop | covering_supernet_different_next_hop
+    fallback_status: str | None = None
     fallback_parent_prefix: str | None = None
     fallback_parent_egress: str | None = None
     active_path_changed: bool | None = None

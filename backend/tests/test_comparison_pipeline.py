@@ -68,27 +68,38 @@ def test_comparison_pipeline_on_provided_sample_csvs(sample_data_dir: Path):
         "10.130.0.0/17",
     }
 
-    # Verify LPM fallback diagnostics on removed prefixes
-    assert important_by_prefix["10.132.0.0/14"]["fallback_status"] == "default_or_blackhole"
+    # Verify objective covering-prefix diagnostics on removed prefixes
+    assert important_by_prefix["10.132.0.0/14"]["fallback_status"] == "no_covering_supernet"
     assert important_by_prefix["10.132.0.0/14"]["severity"] == "CRITICAL"
+
+    # 10.76.12.0/23 has a broader candidate prefix 10.64.0.0/12, but blank Next Hop/Interface in CSV
+    # must be marked as unverifiable (covering_supernet_egress_unknown), NOT falsely "same egress".
     assert important_by_prefix["10.76.12.0/23"]["fallback_parent_prefix"] == "10.64.0.0/12"
+    assert important_by_prefix["10.76.12.0/23"]["fallback_status"] == "covering_supernet_egress_unknown"
+    assert "cannot be confirmed" in important_by_prefix["10.76.12.0/23"]["explanation"]
     assert "pre_specified_route" in important_by_prefix["10.76.12.0/23"]["matched_rules"]
 
-    # Verify primary/backup path selection diagnostics on changed prefixes
+    # Verify objective AD/Metric/PP change summaries on changed prefixes (no speculative failover claim)
     assert important_by_prefix["10.127.0.0/16"]["active_path_changed"] is True
     assert important_by_prefix["10.127.0.0/16"]["severity"] == "CRITICAL"
-    assert "Primary path degraded" in important_by_prefix["10.127.0.0/16"]["explanation"]
+    assert (
+        "Lowest recorded (AD, Metric, PP) entry increased"
+        in important_by_prefix["10.127.0.0/16"]["explanation"]
+    )
 
     assert important_by_prefix["10.130.0.0/17"]["active_path_changed"] is True
-    assert "redundancy decreased from 4 to 2" in important_by_prefix["10.130.0.0/17"]["explanation"]
+    assert (
+        "Recorded route entry count decreased from 4 to 2"
+        in important_by_prefix["10.130.0.0/17"]["explanation"]
+    )
 
-    # 0.0.0.0/0 keeps AD:1 primary unchanged, but has backup next-hop drift + SD-WAN advisory
+    # 0.0.0.0/0 keeps lowest recorded AD:1 entry unchanged, with explicit interface next-hop changes
     default_entry = important_by_prefix["0.0.0.0/0"]
     assert default_entry["active_path_changed"] is False
     assert default_entry["backup_only_changed"] is True
     assert any("twan0" in drift for drift in default_entry["next_hop_changes"])
     assert any("lan0" in drift for drift in default_entry["next_hop_changes"])
-    assert "Local Breakout" in default_entry["explanation"]
+    assert "policy-routed" in default_entry["explanation"]
 
     # Verify pipeline stage telemetry contains all 5 single-responsibility stages
     stage_names = [s["name"] for s in result["pipeline_stages"]]
@@ -165,7 +176,7 @@ def test_lpm_fallback_detects_egress_mismatch():
     )
     entry = result["normal_entries"][0]
     assert entry["fallback_parent_prefix"] == "10.50.0.0/16"
-    assert entry["fallback_status"] == "parent_different_egress"
+    assert entry["fallback_status"] == "covering_supernet_different_next_hop"
     assert entry["severity"] == "MEDIUM"
 
 

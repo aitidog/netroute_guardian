@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ReportViewer } from '../components/ReportViewer';
+import { buildComparisonCsv, ReportViewer } from '../components/ReportViewer';
 import type { ComparisonReport } from '../types';
 
 const mockReport: ComparisonReport = {
@@ -74,9 +74,37 @@ const mockReport: ComparisonReport = {
             peer_priority: null,
             raw_metric: '50 (AD:15)',
           },
+          {
+            next_hop: '',
+            interface: '',
+            protocol: 'sdwan_overlay',
+            admin_distance: 15,
+            metric: 100,
+            peer_priority: null,
+            raw_metric: '100 (AD:15)',
+          },
         ],
         after_paths: [],
-        removed_paths: [],
+        removed_paths: [
+          {
+            next_hop: '',
+            interface: '',
+            protocol: 'sdwan_overlay',
+            admin_distance: 15,
+            metric: 50,
+            peer_priority: null,
+            raw_metric: '50 (AD:15)',
+          },
+          {
+            next_hop: '',
+            interface: '',
+            protocol: 'sdwan_overlay',
+            admin_distance: 15,
+            metric: 100,
+            peer_priority: null,
+            raw_metric: '100 (AD:15)',
+          },
+        ],
         added_paths: [],
         unchanged_path_count: 0,
         is_important: true,
@@ -156,9 +184,10 @@ describe('ReportViewer', () => {
     expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
     expect(screen.queryByText('10.156.43.128/25')).not.toBeInTheDocument();
 
-    // Expanding row reveals before/after path panels
+    // Expanding row reveals before/after path panels & entry delta
+    expect(screen.getByText('-2 entries')).toBeInTheDocument();
     await user.click(screen.getByText('10.132.0.0/14'));
-    expect(screen.getByText(/Before Change Paths \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Before Change Paths \(2\)/)).toBeInTheDocument();
     expect(screen.getByText(/Removed in post-change table/)).toBeInTheDocument();
 
     // Switch to Normal Differences tab
@@ -172,5 +201,76 @@ describe('ReportViewer', () => {
     // Trigger email preview callback
     await user.click(screen.getByRole('button', { name: /Email Preview/i }));
     expect(onPreview).toHaveBeenCalledWith(1);
+  });
+
+  it('filters comparison results by Change Type, Severity, Rule, and search query', async () => {
+    const user = userEvent.setup();
+    render(<ReportViewer report={mockReport} />);
+
+    // Switch to All Differences (contains 1 removed CRITICAL + 1 added INFO)
+    await user.click(screen.getByRole('button', { name: /All Differences/i }));
+    expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
+    expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
+
+    // Filter by Change Type = added
+    await user.selectOptions(screen.getByLabelText(/Filter by Change Type/i), 'added');
+    expect(screen.queryByText('10.132.0.0/14')).not.toBeInTheDocument();
+    expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
+
+    // Combine with Severity = CRITICAL -> 0 results
+    await user.selectOptions(screen.getByLabelText(/Filter by Severity/i), 'CRITICAL');
+    expect(screen.getByText(/No entries match the current filter criteria/i)).toBeInTheDocument();
+
+    // Reset filters restores both entries
+    await user.click(screen.getByRole('button', { name: /Reset/i }));
+    expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
+    expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
+
+    // Filter by Rule = large_prefix
+    await user.selectOptions(screen.getByLabelText(/Filter by Matched Rule/i), 'large_prefix');
+    expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
+    expect(screen.queryByText('10.156.43.128/25')).not.toBeInTheDocument();
+
+    // Reset and search by prefix substring
+    await user.click(screen.getByRole('button', { name: /Reset/i }));
+    await user.type(screen.getByLabelText(/Search prefix or explanation/i), '10.156');
+    expect(screen.queryByText('10.132.0.0/14')).not.toBeInTheDocument();
+    expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Export Filtered CSV \(1\)/i })).toBeInTheDocument();
+  });
+
+  it('generates row-per-entry RFC 4180 CSV with BOM and triggers download on Export CSV click', async () => {
+    const csvText = buildComparisonCsv('uec-abc-prd01', mockReport.report_payload.all_entries);
+    expect(csvText.startsWith('\ufeffAppliance,VRF,Subnet/Mask,Next Hop,Interface,Metric,')).toBe(
+      true
+    );
+    const lines = csvText.trim().split('\n');
+    // 1 header + 2 removed entries for 10.132.0.0/14 + 1 added entry for 10.156.43.128/25
+    expect(lines).toHaveLength(4);
+    expect(csvText).toContain('50 (AD:15)');
+    expect(csvText).toContain('100 (AD:15)');
+    expect(csvText).toContain('10.156.43.128/25');
+
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    const createObjectURLMock = vi.fn().mockReturnValue('blob:mock-csv');
+    const revokeObjectURLMock = vi.fn();
+    URL.createObjectURL = createObjectURLMock;
+    URL.revokeObjectURL = revokeObjectURLMock;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      const user = userEvent.setup();
+      render(<ReportViewer report={mockReport} />);
+      await user.click(screen.getByRole('button', { name: /^Export CSV$/i }));
+
+      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:mock-csv');
+    } finally {
+      URL.createObjectURL = origCreate;
+      URL.revokeObjectURL = origRevoke;
+      clickSpy.mockRestore();
+    }
   });
 });

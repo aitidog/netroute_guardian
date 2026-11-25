@@ -60,11 +60,31 @@
 
         <table class="stats-grid">
           <tr>
-            <td><span class="stat-num" style="color:#b91c1c;">{{ stats.removed_count }}</span><span class="stat-label">Removed</span></td>
-            <td><span class="stat-num" style="color:#15803d;">{{ stats.added_count }}</span><span class="stat-label">Added</span></td>
-            <td><span class="stat-num" style="color:#b45309;">{{ stats.changed_count }}</span><span class="stat-label">Changed</span></td>
-            <td><span class="stat-num" style="color:#991b1b;">{{ stats.important_count }}</span><span class="stat-label">Important Alerts</span></td>
-            <td><span class="stat-num">{{ stats.before_unique_prefixes }} &rarr; {{ stats.after_unique_prefixes }}</span><span class="stat-label">Unique Prefixes</span></td>
+            <td>
+              <span class="stat-num" style="color:#b91c1c;">{{ stats.removed_count }}</span>
+              <span class="stat-label">Removed Prefixes</span>
+              <span style="display:block; font-size:11px; color:#991b1b; margin-top:2px;">-{{ stats.removed_prefix_entries_count }} route entries</span>
+            </td>
+            <td>
+              <span class="stat-num" style="color:#15803d;">{{ stats.added_count }}</span>
+              <span class="stat-label">Added Prefixes</span>
+              <span style="display:block; font-size:11px; color:#166534; margin-top:2px;">+{{ stats.added_prefix_entries_count }} route entries</span>
+            </td>
+            <td>
+              <span class="stat-num" style="color:#b45309;">{{ stats.changed_count }}</span>
+              <span class="stat-label">Changed Prefixes</span>
+              <span style="display:block; font-size:11px; color:#92400e; margin-top:2px;">-{{ stats.changed_removed_entries_count }} / +{{ stats.changed_added_entries_count }} entries</span>
+            </td>
+            <td>
+              <span class="stat-num" style="color:#991b1b;">{{ stats.important_count }}</span>
+              <span class="stat-label">Important Alerts</span>
+              <span style="display:block; font-size:11px; color:#64748b; margin-top:2px;">&lt;=/{{ stats.large_prefix_threshold }}: {{ stats.large_prefix_alert_count }} · Rules: {{ stats.prespecified_alert_count }}</span>
+            </td>
+            <td>
+              <span class="stat-num">{{ stats.before_unique_prefixes }} &rarr; {{ stats.after_unique_prefixes }}</span>
+              <span class="stat-label">Unique Prefixes</span>
+              <span style="display:block; font-size:11px; color:#475569; margin-top:2px;">Raw entries: {{ stats.before_raw_entries }} &rarr; {{ stats.after_raw_entries }} ({{ "%+d"|format(stats.net_entry_delta) }})</span>
+            </td>
           </tr>
         </table>
 
@@ -77,15 +97,28 @@
             <tr>
               <th>Prefix (VRF)</th>
               <th>Change</th>
+              <th>Route Entries</th>
               <th>Severity</th>
               <th>Trigger &amp; Network Analysis</th>
             </tr>
           </thead>
           <tbody>
             {% for item in report.important_entries %}
+            {% set b_cnt = item.before_paths | length %}
+            {% set a_cnt = item.after_paths | length %}
+            {% set rem_cnt = item.removed_paths | length %}
+            {% set add_cnt = item.added_paths | length %}
             <tr style="background:#fffafa;">
               <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
               <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
+              <td class="mono" style="white-space:nowrap;">
+                {{ b_cnt }} &rarr; {{ a_cnt }}<br />
+                <span style="font-size:11px; font-weight:400; color:#475569;">
+                  {% if item.change_type == 'removed' %}-{{ rem_cnt }} entries
+                  {% elif item.change_type == 'added' %}+{{ add_cnt }} entries
+                  {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
+                </span>
+              </td>
               <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
               <td>
                 {% for reason in item.importance_reasons %}
@@ -110,15 +143,28 @@
             <tr>
               <th>Prefix (VRF)</th>
               <th>Change</th>
+              <th>Route Entries</th>
               <th>Severity</th>
               <th>Analysis</th>
             </tr>
           </thead>
           <tbody>
             {% for item in report.normal_entries %}
+            {% set b_cnt = item.before_paths | length %}
+            {% set a_cnt = item.after_paths | length %}
+            {% set rem_cnt = item.removed_paths | length %}
+            {% set add_cnt = item.added_paths | length %}
             <tr>
               <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
               <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
+              <td class="mono" style="white-space:nowrap;">
+                {{ b_cnt }} &rarr; {{ a_cnt }}<br />
+                <span style="font-size:11px; font-weight:400; color:#475569;">
+                  {% if item.change_type == 'removed' %}-{{ rem_cnt }} entries
+                  {% elif item.change_type == 'added' %}+{{ add_cnt }} entries
+                  {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
+                </span>
+              </td>
               <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
               <td>{{ item.explanation }}</td>
             </tr>
@@ -133,6 +179,7 @@
     </div>
 
     <div class="footer">
+      Attached CSV export: <span class="mono">{{ csv_filename }}</span> &nbsp;|&nbsp;
       Generated automatically by <strong>NetRoute Guardian</strong> at {{ generated_at }}.
     </div>
   </div>

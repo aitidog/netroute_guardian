@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.adapters.devices.parsers import auto_parse_routing_text, parse_edgeconnect_csv
+from app.adapters.email.csv_exporter import format_comparison_reports_csv, sanitize_filename_token
 from app.core.database import get_db
 from app.models.entities import (
     AppSetting,
@@ -202,6 +204,22 @@ def get_report(report_id: int, db: Session = Depends(get_db)) -> ComparisonRepor
     if report is None:
         raise HTTPException(status_code=404, detail="Comparison report not found")
     return report
+
+
+@router.get("/reports/{report_id}/export-csv", tags=["Reports"])
+def export_report_csv(report_id: int, db: Session = Depends(get_db)) -> Response:
+    """Download the structured comparison report as an RFC 4180 CSV file."""
+    report = db.get(ComparisonReport, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Comparison report not found")
+
+    csv_text = format_comparison_reports_csv([report.report_payload])
+    filename = f"route-comparison-{sanitize_filename_token(report.device_label)}-{report.id}.csv"
+    return Response(
+        content=("\ufeff" + csv_text).encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/reports/{report_id}/email-preview", tags=["Reports"])

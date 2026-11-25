@@ -37,11 +37,19 @@ def test_comparison_pipeline_on_provided_sample_csvs(sample_data_dir: Path):
     stats = result["summary_stats"]
     assert stats["before_raw_entries"] == 4442
     assert stats["after_raw_entries"] == 4411
+    assert stats["net_entry_delta"] == -31
     assert stats["before_unique_prefixes"] == 1775
     assert stats["after_unique_prefixes"] == 1766
     assert stats["removed_count"] == 10
     assert stats["added_count"] == 1
     assert stats["changed_count"] == 3
+    assert stats["removed_prefix_entries_count"] == 32
+    assert stats["added_prefix_entries_count"] == 3
+    assert stats["changed_removed_entries_count"] == 8
+    assert stats["changed_added_entries_count"] == 6
+    assert stats["removed_entries_count"] == 40
+    assert stats["added_entries_count"] == 9
+    assert stats["total_diff_entry_rows"] == 49
     assert stats["total_differences"] == 14
     assert result["risk_level"] == "CRITICAL"
 

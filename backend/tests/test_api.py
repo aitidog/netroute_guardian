@@ -99,6 +99,16 @@ def test_feature1_end_to_end_change_workflow(client: TestClient):
     assert preview.status_code == 200
     assert "CHG0042108" in preview.json()["subject"]
     assert "10.132.0.0/14" in preview.json()["html"]
+    assert "route-comparison-CHG0042108.csv" in preview.json()["html"]
+
+    csv_resp = client.get(f"/api/v1/reports/{ec_report['id']}/export-csv")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers["content-type"]
+    assert "attachment; filename=" in csv_resp.headers["content-disposition"]
+    csv_lines = csv_resp.content.decode("utf-8-sig").strip().splitlines()
+    # 1 header + 49 expanded route-entry diff rows (40 removed entries + 9 added entries; net -31)
+    assert len(csv_lines) == 50
+    assert "10.132.0.0/14" in csv_resp.text
 
 
 def test_adhoc_demo_csv_and_file_upload_comparison(client: TestClient, sample_data_dir: Path):

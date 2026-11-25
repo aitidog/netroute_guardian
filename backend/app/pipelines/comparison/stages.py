@@ -267,6 +267,20 @@ class ReportAssemblyStage(PipelineStage[ComparisonContext]):
         removed_count = sum(1 for e in ctx.diff_entries if e.change_type == "removed")
         added_count = sum(1 for e in ctx.diff_entries if e.change_type == "added")
         changed_count = sum(1 for e in ctx.diff_entries if e.change_type == "changed")
+        removed_prefix_entries_count = sum(
+            len(e.removed_paths) for e in ctx.diff_entries if e.change_type == "removed"
+        )
+        added_prefix_entries_count = sum(
+            len(e.added_paths) for e in ctx.diff_entries if e.change_type == "added"
+        )
+        changed_removed_entries_count = sum(
+            len(e.removed_paths) for e in ctx.diff_entries if e.change_type == "changed"
+        )
+        changed_added_entries_count = sum(
+            len(e.added_paths) for e in ctx.diff_entries if e.change_type == "changed"
+        )
+        removed_entries_count = removed_prefix_entries_count + changed_removed_entries_count
+        added_entries_count = added_prefix_entries_count + changed_added_entries_count
         large_prefix_hits = sum(1 for e in important_entries if "large_prefix" in e.matched_rules)
         prespecified_hits = sum(1 for e in important_entries if "pre_specified_route" in e.matched_rules)
 
@@ -274,11 +288,19 @@ class ReportAssemblyStage(PipelineStage[ComparisonContext]):
             "device_label": ctx.input_data.device_label,
             "before_raw_entries": ctx.before_raw_count,
             "after_raw_entries": ctx.after_raw_count,
+            "net_entry_delta": ctx.after_raw_count - ctx.before_raw_count,
             "before_unique_prefixes": len(ctx.before_map),
             "after_unique_prefixes": len(ctx.after_map),
             "removed_count": removed_count,
             "added_count": added_count,
             "changed_count": changed_count,
+            "removed_entries_count": removed_entries_count,
+            "added_entries_count": added_entries_count,
+            "removed_prefix_entries_count": removed_prefix_entries_count,
+            "added_prefix_entries_count": added_prefix_entries_count,
+            "changed_removed_entries_count": changed_removed_entries_count,
+            "changed_added_entries_count": changed_added_entries_count,
+            "total_diff_entry_rows": removed_entries_count + added_entries_count,
             "unchanged_count": ctx.unchanged_prefix_count,
             "total_differences": len(ctx.diff_entries),
             "important_count": len(important_entries),
@@ -314,9 +336,13 @@ class ReportAssemblyStage(PipelineStage[ComparisonContext]):
             )
         return (
             f"Detected {stats['total_differences']} prefix difference(s) on {stats['device_label']}: "
-            f"{stats['removed_count']} removed, {stats['added_count']} added, "
-            f"{stats['changed_count']} changed. "
-            f"{stats['important_count']} high-priority entry/entries flagged "
+            f"{stats['removed_count']} removed (-{stats['removed_prefix_entries_count']} entries), "
+            f"{stats['added_count']} added (+{stats['added_prefix_entries_count']} entries), "
+            f"{stats['changed_count']} changed "
+            f"(-{stats['changed_removed_entries_count']}/+{stats['changed_added_entries_count']} entries). "
+            f"Total route entries: {stats['before_raw_entries']} -> {stats['after_raw_entries']} "
+            f"({stats['net_entry_delta']:+d}). "
+            f"{stats['important_count']} high-priority prefix(es) flagged "
             f"({stats['large_prefix_alert_count']} mask <= /{stats['large_prefix_threshold']}, "
             f"{stats['prespecified_alert_count']} pre-specified critical route(s)). "
             f"Overall risk assessment: {stats['risk_level']}."

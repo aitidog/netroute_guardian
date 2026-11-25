@@ -13,28 +13,24 @@ from typing import Any
 
 CSV_HEADERS = [
     "Appliance",
-    "VRF",
     "Subnet/Mask",
     "Next Hop",
     "Interface",
     "Metric",
-    "Protocol",
     "Admin_Distance",
     "Metric_Value",
     "Peer_Priority",
     "Prefix_Change_Type",
     "Entry_Action",
     "Is_Important",
-    "Severity",
     "Matched_Rules",
     "Importance_Reasons",
     "Prefix_Entries_Before",
     "Prefix_Entries_After",
     "Prefix_Entry_Delta",
-    "Affected_IPs",
-    "Fallback_Status",
-    "Fallback_Parent",
     "Explanation",
+    "VRF",
+    "Protocol",
 ]
 
 
@@ -95,40 +91,33 @@ def format_comparison_reports_csv(reports: list[dict[str, Any]]) -> str:
             delta = after_cnt - before_cnt
             prefix_change_type = str(item.get("change_type", "")).upper()
             is_important = "YES" if item.get("is_important") else "NO"
-            severity = item.get("severity", "")
             matched_rules = "; ".join(item.get("matched_rules") or [])
             importance_reasons = "; ".join(item.get("importance_reasons") or [])
-            affected_ips = item.get("affected_ip_count", 0)
-            fallback_status = item.get("fallback_status") or ""
-            fallback_parent = item.get("fallback_parent_prefix") or ""
             explanation = item.get("explanation", "")
+            vrf = item.get("vrf", "default")
 
             for entry_action, path in _iter_entry_rows(item):
                 writer.writerow(
                     [
                         device_label,
-                        item.get("vrf", "default"),
                         item.get("prefix", ""),
                         path.get("next_hop", ""),
                         path.get("interface", ""),
                         _format_metric_display(path),
-                        path.get("protocol", ""),
                         "" if path.get("admin_distance") is None else path.get("admin_distance"),
                         "" if path.get("metric") is None else path.get("metric"),
                         "" if path.get("peer_priority") is None else path.get("peer_priority"),
                         prefix_change_type,
                         entry_action,
                         is_important,
-                        severity,
                         matched_rules,
                         importance_reasons,
                         before_cnt,
                         after_cnt,
                         f"{delta:+d}" if delta != 0 else "0",
-                        affected_ips,
-                        fallback_status,
-                        fallback_parent,
                         explanation,
+                        vrf,
+                        path.get("protocol", ""),
                     ]
                 )
 

@@ -203,11 +203,15 @@ describe('ReportViewer', () => {
     expect(onPreview).toHaveBeenCalledWith(1);
   });
 
-  it('filters comparison results by Change Type, Severity, Rule, and search query', async () => {
+  it('filters comparison results by Change Type, Rule, and search query without Severity column', async () => {
     const user = userEvent.setup();
     render(<ReportViewer report={mockReport} />);
 
-    // Switch to All Differences (contains 1 removed CRITICAL + 1 added INFO)
+    // Severity filter & column are intentionally removed; Important badge is highlighted
+    expect(screen.queryByLabelText(/Filter by Severity/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Important')).toBeInTheDocument();
+
+    // Switch to All Differences (contains 1 removed important + 1 added normal)
     await user.click(screen.getByRole('button', { name: /All Differences/i }));
     expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
     expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
@@ -217,8 +221,8 @@ describe('ReportViewer', () => {
     expect(screen.queryByText('10.132.0.0/14')).not.toBeInTheDocument();
     expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
 
-    // Combine with Severity = CRITICAL -> 0 results
-    await user.selectOptions(screen.getByLabelText(/Filter by Severity/i), 'CRITICAL');
+    // Combine with Rule = large_prefix -> 0 results
+    await user.selectOptions(screen.getByLabelText(/Filter by Matched Rule/i), 'large_prefix');
     expect(screen.getByText(/No entries match the current filter criteria/i)).toBeInTheDocument();
 
     // Reset filters restores both entries
@@ -226,7 +230,7 @@ describe('ReportViewer', () => {
     expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
     expect(screen.getByText('10.156.43.128/25')).toBeInTheDocument();
 
-    // Filter by Rule = large_prefix
+    // Filter by Rule = large_prefix alone
     await user.selectOptions(screen.getByLabelText(/Filter by Matched Rule/i), 'large_prefix');
     expect(screen.getByText('10.132.0.0/14')).toBeInTheDocument();
     expect(screen.queryByText('10.156.43.128/25')).not.toBeInTheDocument();
@@ -239,12 +243,21 @@ describe('ReportViewer', () => {
     expect(screen.getByRole('button', { name: /Export Filtered CSV \(1\)/i })).toBeInTheDocument();
   });
 
-  it('generates row-per-entry RFC 4180 CSV with BOM and triggers download on Export CSV click', async () => {
+  it('generates row-per-entry CSV with VRF/Protocol last and excluded columns omitted', async () => {
     const csvText = buildComparisonCsv('uec-abc-prd01', mockReport.report_payload.all_entries);
-    expect(csvText.startsWith('\ufeffAppliance,VRF,Subnet/Mask,Next Hop,Interface,Metric,')).toBe(
-      true
-    );
     const lines = csvText.trim().split('\n');
+    const headers = lines[0].replace(/^\ufeff/, '').split(',');
+    expect(headers.slice(0, 5)).toEqual([
+      'Appliance',
+      'Subnet/Mask',
+      'Next Hop',
+      'Interface',
+      'Metric',
+    ]);
+    expect(headers.slice(-2)).toEqual(['VRF', 'Protocol']);
+    for (const excluded of ['Severity', 'Affected_IPs', 'Fallback_Status', 'Fallback_Parent']) {
+      expect(headers).not.toContain(excluded);
+    }
     // 1 header + 2 removed entries for 10.132.0.0/14 + 1 added entry for 10.156.43.128/25
     expect(lines).toHaveLength(4);
     expect(csvText).toContain('50 (AD:15)');

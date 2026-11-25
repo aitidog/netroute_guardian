@@ -66,12 +66,13 @@ def test_email_html_rendering_contains_important_and_normal_sections(test_settin
         recipient_email="alex.rivera@netops.local",
         reports=[_sample_report()],
     )
-    assert "[CRITICAL]" in subject
+    assert "IMPORTANT: 2 Alert(s)" in subject
     assert "CHG0042108" in subject
     assert "10.132.0.0/14" in html
     assert "10.76.12.0/23" in html
     assert "10.156.43.128/25" in html
     assert "Emphasized Important Routing Differences" in html
+    assert "<th>Severity</th>" not in html
 
 
 @pytest.mark.asyncio
@@ -117,6 +118,10 @@ def test_format_comparison_reports_csv_headers_and_values():
     reader = csv.reader(io.StringIO(csv_text))
     headers = next(reader)
     assert headers == CSV_HEADERS
+    # Verify VRF and Protocol are placed at the end and excluded columns are absent
+    assert headers[-2:] == ["VRF", "Protocol"]
+    for excluded in ("Severity", "Affected_IPs", "Fallback_Status", "Fallback_Parent"):
+        assert excluded not in headers
     rows = list(reader)
     assert len(rows) == 4
     assert rows[0][0] == "uec-abc-prd01"

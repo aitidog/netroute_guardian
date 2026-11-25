@@ -11,12 +11,8 @@
     .header p { margin: 0; font-size: 13px; color: #cbd5e1; }
     .content { padding: 24px 28px; }
     .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
-    .badge-CRITICAL { background: #fee2e2; color: #991b1b; }
-    .badge-HIGH { background: #ffedd5; color: #9a3412; }
-    .badge-MEDIUM { background: #fef9c3; color: #854d0e; }
-    .badge-LOW { background: #dbeafe; color: #1e40af; }
-    .badge-INFO { background: #e0f2fe; color: #075985; }
-    .badge-PASS { background: #dcfce7; color: #166534; }
+    .badge-important { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-clean { background: #dcfce7; color: #166534; }
     .badge-removed { background: #fee2e2; color: #b91c1c; }
     .badge-added { background: #dcfce7; color: #15803d; }
     .badge-changed { background: #fef3c7; color: #b45309; }
@@ -42,7 +38,11 @@
       <p>
         Change: <strong>{{ chg_number }}</strong> — {{ change_title }} &nbsp;|&nbsp;
         Engineer: {{ engineer_name }} ({{ recipient_email }}) &nbsp;|&nbsp;
-        Overall Risk: <span class="badge badge-{{ overall_risk }}">{{ overall_risk }}</span>
+        {% if total_important_alerts > 0 %}
+        <span class="badge badge-important">{{ total_important_alerts }} IMPORTANT ALERT(S)</span>
+        {% else %}
+        <span class="badge badge-clean">NO IMPORTANT ALERTS</span>
+        {% endif %}
       </p>
     </div>
 
@@ -53,10 +53,13 @@
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <h2 style="margin:0; font-size:17px;">
             Device: <span class="mono">{{ report.device_label }}</span>
-            &nbsp;<span class="badge badge-{{ report.risk_level }}">{{ report.risk_level }}</span>
+            {% if stats.important_count > 0 %}
+            &nbsp;<span class="badge badge-important">{{ stats.important_count }} IMPORTANT</span>
+            {% else %}
+            &nbsp;<span class="badge badge-clean">NO IMPORTANT ALERTS</span>
+            {% endif %}
           </h2>
         </div>
-        <p style="margin:8px 0 12px 0; font-size:13px; color:#334155;">{{ report.executive_summary }}</p>
 
         <table class="stats-grid">
           <tr>
@@ -98,8 +101,7 @@
               <th>Prefix (VRF)</th>
               <th>Change</th>
               <th>Route Entries</th>
-              <th>Severity</th>
-              <th>Trigger &amp; Network Analysis</th>
+              <th>Trigger &amp; Analysis</th>
             </tr>
           </thead>
           <tbody>
@@ -108,8 +110,12 @@
             {% set a_cnt = item.after_paths | length %}
             {% set rem_cnt = item.removed_paths | length %}
             {% set add_cnt = item.added_paths | length %}
-            <tr style="background:#fffafa;">
-              <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
+            <tr style="background:#fef2f2; border-left:4px solid #dc2626;">
+              <td class="mono">
+                {{ item.prefix }}
+                <span class="badge badge-important" style="font-size:10px; padding:1px 6px; margin-left:4px;">IMPORTANT</span>
+                <br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span>
+              </td>
               <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
               <td class="mono" style="white-space:nowrap;">
                 {{ b_cnt }} &rarr; {{ a_cnt }}<br />
@@ -119,7 +125,6 @@
                   {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
                 </span>
               </td>
-              <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
               <td>
                 {% for reason in item.importance_reasons %}
                 <span class="reason-pill">{{ reason }}</span>
@@ -144,7 +149,6 @@
               <th>Prefix (VRF)</th>
               <th>Change</th>
               <th>Route Entries</th>
-              <th>Severity</th>
               <th>Analysis</th>
             </tr>
           </thead>
@@ -165,7 +169,6 @@
                   {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
                 </span>
               </td>
-              <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
               <td>{{ item.explanation }}</td>
             </tr>
             {% endfor %}

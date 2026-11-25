@@ -10,7 +10,6 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { RiskBadge } from '../components/RiskBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import type { ChangeRequest, SchedulerStatus } from '../types';
 
@@ -100,7 +99,7 @@ export const ChangesPage: React.FC = () => {
     }
   };
 
-  const criticalCount = changes.filter((c) => c.highest_risk_level === 'CRITICAL').length;
+  const completedCount = changes.filter((c) => c.status === 'completed').length;
   const preCapturedCount = changes.filter((c) => c.status === 'pre_captured').length;
 
   return (
@@ -152,12 +151,12 @@ export const ChangesPage: React.FC = () => {
           <div className="text-xs text-slate-500 mt-1">Pre-change baseline captured</div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="text-xs font-semibold text-slate-500 uppercase">Critical Risk Changes</div>
-          <div className="text-2xl font-bold text-red-600 mt-1 flex items-center gap-1.5">
-            {criticalCount}
-            {criticalCount > 0 && <ShieldAlert className="w-5 h-5 text-red-500" />}
+          <div className="text-xs font-semibold text-slate-500 uppercase">Completed Comparisons</div>
+          <div className="text-2xl font-bold text-emerald-600 mt-1 flex items-center gap-1.5">
+            {completedCount}
+            {completedCount > 0 && <ShieldAlert className="w-5 h-5 text-emerald-500" />}
           </div>
-          <div className="text-xs text-slate-500 mt-1">Mask &lt;=/20 or critical route impacted</div>
+          <div className="text-xs text-slate-500 mt-1">Reports analyzed &amp; emailed</div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
           <div className="text-xs font-semibold text-slate-500 uppercase">Background Scheduler</div>
@@ -194,7 +193,6 @@ export const ChangesPage: React.FC = () => {
                   <th className="px-4 py-3 text-left font-semibold">Associated CIs</th>
                   <th className="px-4 py-3 text-left font-semibold">Schedule (T-1h Capture)</th>
                   <th className="px-4 py-3 text-left font-semibold">Workflow Status</th>
-                  <th className="px-4 py-3 text-left font-semibold">Risk</th>
                   <th className="px-5 py-3 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -242,9 +240,6 @@ export const ChangesPage: React.FC = () => {
                         Pre: {chg.pre_snapshot_count} · Post: {chg.post_snapshot_count} · Reports:{' '}
                         {chg.report_count}
                       </div>
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <RiskBadge level={chg.highest_risk_level} />
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap text-right space-x-2">
                       {chg.status === 'synced' && (

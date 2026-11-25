@@ -12,8 +12,7 @@ import {
   Send,
   ShieldAlert,
 } from 'lucide-react';
-import type { ComparisonReport, RiskLevel, RouteDiffEntry, RoutePath } from '../types';
-import { RiskBadge } from './RiskBadge';
+import type { ComparisonReport, RouteDiffEntry, RoutePath } from '../types';
 
 function escapeCsvCell(value: string | number | null | undefined): string {
   const str = String(value ?? '');
@@ -61,28 +60,24 @@ function expandEntryRows(item: RouteDiffEntry): Array<{ action: 'REMOVED' | 'ADD
 export function buildComparisonCsv(deviceLabel: string, rows: RouteDiffEntry[]): string {
   const headers = [
     'Appliance',
-    'VRF',
     'Subnet/Mask',
     'Next Hop',
     'Interface',
     'Metric',
-    'Protocol',
     'Admin_Distance',
     'Metric_Value',
     'Peer_Priority',
     'Prefix_Change_Type',
     'Entry_Action',
     'Is_Important',
-    'Severity',
     'Matched_Rules',
     'Importance_Reasons',
     'Prefix_Entries_Before',
     'Prefix_Entries_After',
     'Prefix_Entry_Delta',
-    'Affected_IPs',
-    'Fallback_Status',
-    'Fallback_Parent',
     'Explanation',
+    'VRF',
+    'Protocol',
   ];
   const lines = [headers.join(',')];
   for (const item of rows) {
@@ -95,28 +90,24 @@ export function buildComparisonCsv(deviceLabel: string, rows: RouteDiffEntry[]):
       lines.push(
         [
           deviceLabel,
-          item.vrf,
           item.prefix,
           path.next_hop,
           path.interface,
           formatMetricDisplay(path),
-          path.protocol,
           path.admin_distance ?? '',
           path.metric ?? '',
           path.peer_priority ?? '',
           item.change_type.toUpperCase(),
           action,
           item.is_important ? 'YES' : 'NO',
-          item.severity,
           item.matched_rules.join('; '),
           item.importance_reasons.join('; '),
           beforeCnt,
           afterCnt,
           deltaText,
-          item.affected_ip_count,
-          item.fallback_status ?? '',
-          item.fallback_parent_prefix ?? '',
           item.explanation,
+          item.vrf,
+          path.protocol,
         ]
           .map(escapeCsvCell)
           .join(',')
@@ -147,7 +138,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
   const [changeTypeFilter, setChangeTypeFilter] = useState<'all' | RouteDiffEntry['change_type']>(
     'all'
   );
-  const [severityFilter, setSeverityFilter] = useState<'all' | RiskLevel>('all');
   const [ruleFilter, setRuleFilter] = useState<'all' | 'large_prefix' | 'pre_specified_route'>(
     'all'
   );
@@ -173,14 +163,12 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
 
   const hasActiveFilters =
     changeTypeFilter !== 'all' ||
-    severityFilter !== 'all' ||
     ruleFilter !== 'all' ||
     vrfFilter !== 'all' ||
     searchQuery.trim() !== '';
 
   const resetFilters = () => {
     setChangeTypeFilter('all');
-    setSeverityFilter('all');
     setRuleFilter('all');
     setVrfFilter('all');
     setSearchQuery('');
@@ -190,9 +178,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
     const q = searchQuery.trim().toLowerCase();
     return tabEntries.filter((entry) => {
       if (changeTypeFilter !== 'all' && entry.change_type !== changeTypeFilter) {
-        return false;
-      }
-      if (severityFilter !== 'all' && entry.severity !== severityFilter) {
         return false;
       }
       if (ruleFilter !== 'all' && !entry.matched_rules.includes(ruleFilter)) {
@@ -211,7 +196,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
       }
       return true;
     });
-  }, [tabEntries, changeTypeFilter, severityFilter, ruleFilter, vrfFilter, searchQuery]);
+  }, [tabEntries, changeTypeFilter, ruleFilter, vrfFilter, searchQuery]);
 
   const handleExportCsv = (exportScope: 'all' | 'filtered') => {
     const targetRows = exportScope === 'filtered' ? entries : payload.all_entries;
@@ -227,6 +212,27 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const removedPrefixEntries =
+    stats.removed_prefix_entries_count ??
+    payload.all_entries
+      .filter((e) => e.change_type === 'removed')
+      .reduce((acc, e) => acc + (e.removed_paths.length || e.before_paths.length), 0);
+  const addedPrefixEntries =
+    stats.added_prefix_entries_count ??
+    payload.all_entries
+      .filter((e) => e.change_type === 'added')
+      .reduce((acc, e) => acc + (e.added_paths.length || e.after_paths.length), 0);
+  const changedRemovedEntries =
+    stats.changed_removed_entries_count ??
+    payload.all_entries
+      .filter((e) => e.change_type === 'changed')
+      .reduce((acc, e) => acc + e.removed_paths.length, 0);
+  const changedAddedEntries =
+    stats.changed_added_entries_count ??
+    payload.all_entries
+      .filter((e) => e.change_type === 'changed')
+      .reduce((acc, e) => acc + e.added_paths.length, 0);
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
       {/* Header Banner */}
@@ -234,9 +240,22 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
         <div>
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-bold font-mono">{payload.device_label}</h3>
-            <RiskBadge level={payload.risk_level} />
+            {stats.important_count > 0 ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-500/20 text-red-200 border border-red-400/50">
+                <ShieldAlert className="w-3.5 h-3.5" />
+                {stats.important_count} IMPORTANT ALERT{stats.important_count > 1 ? 'S' : ''}
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">
+                NO IMPORTANT ALERTS
+              </span>
+            )}
           </div>
-          <p className="text-xs text-slate-300 mt-1">{payload.executive_summary}</p>
+          <p className="text-xs text-slate-300 mt-1">
+            {stats.total_differences === 0
+              ? `No routing table differences detected (${stats.after_unique_prefixes} unique prefixes verified).`
+              : `${stats.total_differences} prefix difference(s): ${stats.removed_count} removed (-${removedPrefixEntries} entries), ${stats.added_count} added (+${addedPrefixEntries} entries), ${stats.changed_count} changed (-${changedRemovedEntries}/+${changedAddedEntries} entries).`}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -276,25 +295,25 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
           <div className="text-xs font-medium text-slate-500 uppercase">Removed</div>
           <div className="text-2xl font-bold text-red-600 mt-0.5">{stats.removed_count}</div>
           <div className="text-[11px] text-red-700 font-mono">
-            -{stats.removed_prefix_entries_count ?? payload.all_entries.filter((e) => e.change_type === 'removed').reduce((acc, e) => acc + (e.removed_paths.length || e.before_paths.length), 0)} route entries
+            -{removedPrefixEntries} route entries
           </div>
         </div>
         <div className="bg-white p-3 rounded-lg border border-slate-200">
           <div className="text-xs font-medium text-slate-500 uppercase">Added</div>
           <div className="text-2xl font-bold text-emerald-600 mt-0.5">{stats.added_count}</div>
           <div className="text-[11px] text-emerald-700 font-mono">
-            +{stats.added_prefix_entries_count ?? payload.all_entries.filter((e) => e.change_type === 'added').reduce((acc, e) => acc + (e.added_paths.length || e.after_paths.length), 0)} route entries
+            +{addedPrefixEntries} route entries
           </div>
         </div>
         <div className="bg-white p-3 rounded-lg border border-slate-200">
           <div className="text-xs font-medium text-slate-500 uppercase">Changed</div>
           <div className="text-2xl font-bold text-amber-600 mt-0.5">{stats.changed_count}</div>
           <div className="text-[11px] text-amber-700 font-mono">
-            -{stats.changed_removed_entries_count ?? payload.all_entries.filter((e) => e.change_type === 'changed').reduce((acc, e) => acc + e.removed_paths.length, 0)} / +{stats.changed_added_entries_count ?? payload.all_entries.filter((e) => e.change_type === 'changed').reduce((acc, e) => acc + e.added_paths.length, 0)} entries
+            -{changedRemovedEntries} / +{changedAddedEntries} entries
           </div>
         </div>
-        <div className="bg-white p-3 rounded-lg border border-red-200 bg-red-50/40">
-          <div className="text-xs font-medium text-red-700 uppercase">Important Alerts</div>
+        <div className="bg-red-50/70 p-3 rounded-lg border border-red-300">
+          <div className="text-xs font-semibold text-red-700 uppercase">Important Alerts</div>
           <div className="text-2xl font-bold text-red-700 mt-0.5">{stats.important_count}</div>
           <div className="text-[11px] text-red-600">
             &lt;=/{stats.large_prefix_threshold}: {stats.large_prefix_alert_count} · Rules:{' '}
@@ -323,7 +342,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
         </div>
       </div>
 
-      {/* Filter Tabs + Pipeline Trace Toggle */}
+      {/* Category Tabs + Pipeline Trace Toggle */}
       <div className="px-5 pt-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200">
         <div className="flex gap-1">
           <button
@@ -431,20 +450,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
           </select>
 
           <select
-            aria-label="Filter by Severity"
-            value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value as 'all' | RiskLevel)}
-            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="all">Severity: All</option>
-            <option value="CRITICAL">Severity: CRITICAL</option>
-            <option value="HIGH">Severity: HIGH</option>
-            <option value="MEDIUM">Severity: MEDIUM</option>
-            <option value="LOW">Severity: LOW</option>
-            <option value="INFO">Severity: INFO</option>
-          </select>
-
-          <select
             aria-label="Filter by Matched Rule"
             value={ruleFilter}
             onChange={(e) =>
@@ -519,8 +524,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                 <th className="px-4 py-3 text-left font-semibold">Prefix / VRF</th>
                 <th className="px-4 py-3 text-left font-semibold">Change</th>
                 <th className="px-4 py-3 text-left font-semibold">Route Entries</th>
-                <th className="px-4 py-3 text-left font-semibold">Severity</th>
-                <th className="px-4 py-3 text-left font-semibold">Network Analysis &amp; Explanation</th>
+                <th className="px-4 py-3 text-left font-semibold">Analysis &amp; Explanation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -528,15 +532,19 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                 const rowKey = `${entry.vrf}:${entry.prefix}:${entry.change_type}`;
                 const isExpanded = expandedKey === rowKey;
                 const remEntries =
-                  entry.removed_paths.length || (entry.change_type === 'removed' ? entry.before_paths.length : 0);
+                  entry.removed_paths.length ||
+                  (entry.change_type === 'removed' ? entry.before_paths.length : 0);
                 const addEntries =
-                  entry.added_paths.length || (entry.change_type === 'added' ? entry.after_paths.length : 0);
+                  entry.added_paths.length ||
+                  (entry.change_type === 'added' ? entry.after_paths.length : 0);
                 return (
                   <React.Fragment key={rowKey}>
                     <tr
                       onClick={() => setExpandedKey(isExpanded ? null : rowKey)}
                       className={`cursor-pointer transition-colors ${
-                        entry.is_important ? 'bg-red-50/30 hover:bg-red-50/60' : 'hover:bg-slate-50'
+                        entry.is_important
+                          ? 'bg-red-50/75 hover:bg-red-100/70 border-l-4 border-l-red-600'
+                          : 'hover:bg-slate-50'
                       }`}
                     >
                       <td className="px-3 py-3 text-slate-400">
@@ -551,11 +559,14 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                           {entry.is_important && (
                             <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
                           )}
-                          {entry.prefix}
+                          <span>{entry.prefix}</span>
+                          {entry.is_important && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
+                              Important
+                            </span>
+                          )}
                         </div>
-                        <div className="text-xs text-slate-500">
-                          VRF: {entry.vrf} · {entry.affected_ip_count.toLocaleString()} IPs
-                        </div>
+                        <div className="text-xs text-slate-500">VRF: {entry.vrf}</div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span
@@ -582,16 +593,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <RiskBadge level={entry.severity} />
-                      </td>
                       <td className="px-4 py-3">
                         {entry.importance_reasons.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mb-1.5">
                             {entry.importance_reasons.map((reason) => (
                               <span
                                 key={reason}
-                                className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-red-100 text-red-800 border border-red-200"
+                                className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-red-100 text-red-800 border border-red-300"
                               >
                                 {reason}
                               </span>
@@ -604,7 +612,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
 
                     {isExpanded && (
                       <tr className="bg-slate-50/90">
-                        <td colSpan={6} className="px-6 py-4">
+                        <td colSpan={5} className="px-6 py-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                             <div className="bg-white rounded-lg border border-slate-200 p-3">
                               <div className="font-semibold text-slate-700 mb-2">

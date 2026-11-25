@@ -18,7 +18,6 @@ from app.core.config import Settings
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
-_RISK_RANK = {"PASS": 0, "INFO": 1, "LOW": 2, "MEDIUM": 3, "HIGH": 4, "CRITICAL": 5}
 
 
 @dataclass
@@ -51,14 +50,22 @@ class EmailReportSender:
         reports: list[dict[str, Any]],
     ) -> tuple[str, str]:
         """Return ``(subject, html_body)`` for one or more device comparison reports."""
-        overall_risk = "PASS"
-        for rep in reports:
-            level = str(rep.get("risk_level") or "PASS")
-            if _RISK_RANK.get(level, 0) > _RISK_RANK.get(overall_risk, 0):
-                overall_risk = level
+        total_important_alerts = sum(
+            int((r.get("summary_stats") or {}).get("important_count", 0)) for r in reports
+        )
+        total_differences = sum(
+            int((r.get("summary_stats") or {}).get("total_differences", 0)) for r in reports
+        )
+
+        if total_important_alerts > 0:
+            subject_tag = f"IMPORTANT: {total_important_alerts} Alert(s)"
+        elif total_differences > 0:
+            subject_tag = f"{total_differences} Diff(s)"
+        else:
+            subject_tag = "No Differences"
 
         device_names = ", ".join(str(r.get("device_label", "")) for r in reports)
-        subject = f"[{overall_risk}] Route Comparison Report — {chg_number} ({device_names})"
+        subject = f"[{subject_tag}] Route Comparison Report — {chg_number} ({device_names})"
         csv_filename = f"route-comparison-{sanitize_filename_token(chg_number)}.csv"
 
         template = self._jinja.get_template("comparison_report.html")
@@ -67,7 +74,7 @@ class EmailReportSender:
             change_title=change_title,
             engineer_name=engineer_name,
             recipient_email=recipient_email,
-            overall_risk=overall_risk,
+            total_important_alerts=total_important_alerts,
             reports=reports,
             csv_filename=csv_filename,
             generated_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),

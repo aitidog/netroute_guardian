@@ -123,10 +123,79 @@ interface ReportViewerProps {
   onResendEmail?: (reportId: number) => void;
 }
 
+function pathSignature(path: RoutePath): string {
+  return JSON.stringify([
+    path.next_hop ?? '',
+    path.interface ?? '',
+    path.protocol ?? 'unknown',
+    path.admin_distance ?? null,
+    path.metric ?? null,
+    path.peer_priority ?? null,
+    path.raw_metric ?? '',
+  ]);
+}
+
+export function annotatePathDiffs(entry: RouteDiffEntry): {
+  before: Array<{ path: RoutePath; status: 'removed' | 'unchanged' }>;
+  after: Array<{ path: RoutePath; status: 'added' | 'unchanged' }>;
+} {
+  const removedCounts = new Map<string, number>();
+  const removedSource =
+    entry.removed_paths.length > 0
+      ? entry.removed_paths
+      : entry.change_type === 'removed'
+        ? entry.before_paths
+        : [];
+  for (const p of removedSource) {
+    const sig = pathSignature(p);
+    removedCounts.set(sig, (removedCounts.get(sig) ?? 0) + 1);
+  }
+
+  const addedCounts = new Map<string, number>();
+  const addedSource =
+    entry.added_paths.length > 0
+      ? entry.added_paths
+      : entry.change_type === 'added'
+        ? entry.after_paths
+        : [];
+  for (const p of addedSource) {
+    const sig = pathSignature(p);
+    addedCounts.set(sig, (addedCounts.get(sig) ?? 0) + 1);
+  }
+
+  const before = entry.before_paths.map((path) => {
+    const sig = pathSignature(path);
+    const remaining = removedCounts.get(sig) ?? 0;
+    if (remaining > 0) {
+      removedCounts.set(sig, remaining - 1);
+      return { path, status: 'removed' as const };
+    }
+    return { path, status: 'unchanged' as const };
+  });
+
+  const after = entry.after_paths.map((path) => {
+    const sig = pathSignature(path);
+    const remaining = addedCounts.get(sig) ?? 0;
+    if (remaining > 0) {
+      addedCounts.set(sig, remaining - 1);
+      return { path, status: 'added' as const };
+    }
+    return { path, status: 'unchanged' as const };
+  });
+
+  return { before, after };
+}
+
 const CHANGE_BADGE: Record<RouteDiffEntry['change_type'], string> = {
   removed: 'bg-red-100 text-red-700 border-red-200',
   added: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   changed: 'bg-amber-100 text-amber-800 border-amber-200',
+};
+
+const CHANGE_PREFIX_TEXT: Record<RouteDiffEntry['change_type'], string> = {
+  removed: 'text-red-700',
+  added: 'text-emerald-700',
+  changed: 'text-amber-800',
 };
 
 export const ReportViewer: React.FC<ReportViewerProps> = ({
@@ -308,8 +377,11 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
         <div className="bg-white p-3 rounded-lg border border-slate-200">
           <div className="text-xs font-medium text-slate-500 uppercase">Changed</div>
           <div className="text-2xl font-bold text-amber-600 mt-0.5">{stats.changed_count}</div>
-          <div className="text-[11px] text-amber-700 font-mono">
-            -{changedRemovedEntries} / +{changedAddedEntries} entries
+          <div className="text-[11px] font-mono">
+            <span className="text-red-700 font-semibold">-{changedRemovedEntries}</span>
+            <span className="text-slate-400"> / </span>
+            <span className="text-emerald-700 font-semibold">+{changedAddedEntries}</span>
+            <span className="text-slate-500"> entries</span>
           </div>
         </div>
         <div className="bg-red-50/70 p-3 rounded-lg border border-red-300">
@@ -327,8 +399,19 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
           </div>
           <div className="text-[11px] text-slate-600 font-mono">
             Entries: {stats.before_raw_entries} &rarr; {stats.after_raw_entries} (
-            {stats.after_raw_entries - stats.before_raw_entries >= 0 ? '+' : ''}
-            {stats.after_raw_entries - stats.before_raw_entries})
+            <span
+              className={
+                stats.after_raw_entries - stats.before_raw_entries < 0
+                  ? 'text-red-700 font-semibold'
+                  : stats.after_raw_entries - stats.before_raw_entries > 0
+                    ? 'text-emerald-700 font-semibold'
+                    : 'text-slate-600'
+              }
+            >
+              {stats.after_raw_entries - stats.before_raw_entries > 0 ? '+' : ''}
+              {stats.after_raw_entries - stats.before_raw_entries}
+            </span>
+            )
           </div>
         </div>
         <div className="bg-white p-3 rounded-lg border border-slate-200">
@@ -537,6 +620,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                 const addEntries =
                   entry.added_paths.length ||
                   (entry.change_type === 'added' ? entry.after_paths.length : 0);
+                const annotatedPaths = isExpanded ? annotatePathDiffs(entry) : null;
+                const afterCountColor =
+                  entry.after_paths.length < entry.before_paths.length
+                    ? 'text-red-700'
+                    : entry.after_paths.length > entry.before_paths.length
+                      ? 'text-emerald-700'
+                      : 'text-amber-700';
                 return (
                   <React.Fragment key={rowKey}>
                     <tr
@@ -555,11 +645,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                         )}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-mono font-semibold text-slate-900 flex items-center gap-1.5">
+                        <div className="font-mono font-semibold flex items-center gap-1.5">
                           {entry.is_important && (
                             <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
                           )}
-                          <span>{entry.prefix}</span>
+                          <span className={CHANGE_PREFIX_TEXT[entry.change_type]}>
+                            {entry.prefix}
+                          </span>
                           {entry.is_important && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
                               Important
@@ -576,19 +668,31 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap font-mono text-xs">
-                        <div className="font-semibold text-slate-800">
-                          {entry.before_paths.length} &rarr; {entry.after_paths.length}
+                        <div className="font-semibold text-slate-700">
+                          {entry.before_paths.length} &rarr;{' '}
+                          <span className={afterCountColor}>{entry.after_paths.length}</span>
                         </div>
                         <div className="text-[11px]">
                           {entry.change_type === 'removed' && (
-                            <span className="text-red-700">-{remEntries} entries</span>
+                            <span className="text-red-700 font-semibold">-{remEntries} entries</span>
                           )}
                           {entry.change_type === 'added' && (
-                            <span className="text-emerald-700">+{addEntries} entries</span>
+                            <span className="text-emerald-700 font-semibold">
+                              +{addEntries} entries
+                            </span>
                           )}
                           {entry.change_type === 'changed' && (
-                            <span className="text-amber-700">
-                              -{remEntries} / +{addEntries} entries
+                            <span className="inline-flex items-center gap-1">
+                              {remEntries > 0 && (
+                                <span className="text-red-700 font-semibold">-{remEntries}</span>
+                              )}
+                              {remEntries > 0 && addEntries > 0 && (
+                                <span className="text-slate-400">/</span>
+                              )}
+                              {addEntries > 0 && (
+                                <span className="text-emerald-700 font-semibold">+{addEntries}</span>
+                              )}
+                              <span className="text-slate-500">entries</span>
                             </span>
                           )}
                         </div>
@@ -610,22 +714,59 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                       </td>
                     </tr>
 
-                    {isExpanded && (
+                    {isExpanded && annotatedPaths && (
                       <tr className="bg-slate-50/90">
                         <td colSpan={5} className="px-6 py-4">
+                          <div className="flex flex-wrap items-center gap-4 text-[11px] mb-2.5 text-slate-500">
+                            <span className="font-semibold uppercase tracking-wide text-slate-600">
+                              Path Entry Legend:
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-red-700 font-medium">
+                              <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                              [-] Removed
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-emerald-700 font-medium">
+                              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                              [+] Added
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-slate-500">
+                              <span className="inline-block w-2 h-2 rounded-full bg-slate-300" />
+                              [=] Unchanged
+                            </span>
+                          </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                             <div className="bg-white rounded-lg border border-slate-200 p-3">
-                              <div className="font-semibold text-slate-700 mb-2">
-                                Before Change Paths ({entry.before_paths.length})
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <span className="font-semibold text-slate-700">
+                                  Before Change Paths ({entry.before_paths.length})
+                                </span>
+                                {remEntries > 0 && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700">
+                                    -{remEntries} removed
+                                  </span>
+                                )}
                               </div>
-                              {entry.before_paths.length === 0 ? (
+                              {annotatedPaths.before.length === 0 ? (
                                 <p className="text-slate-400 italic">Not present before change</p>
                               ) : (
                                 <ul className="space-y-1 font-mono">
-                                  {entry.before_paths.map((p, idx) => (
-                                    <li key={idx} className="text-slate-700">
-                                      NH: {p.next_hop || '(overlay)'} | IF: {p.interface || '-'} |{' '}
-                                      {p.raw_metric || `M:${p.metric} AD:${p.admin_distance}`}
+                                  {annotatedPaths.before.map(({ path: p, status }, idx) => (
+                                    <li
+                                      key={idx}
+                                      data-path-status={status}
+                                      className={
+                                        status === 'removed'
+                                          ? 'flex items-start gap-2 px-2 py-1 rounded bg-red-50/90 text-red-700 border-l-2 border-red-500 font-medium'
+                                          : 'flex items-start gap-2 px-2 py-1 rounded text-slate-500'
+                                      }
+                                    >
+                                      <span className="font-bold select-none shrink-0">
+                                        {status === 'removed' ? '[-]' : '[=]'}
+                                      </span>
+                                      <span>
+                                        NH: {p.next_hop || '(overlay)'} | IF: {p.interface || '-'}{' '}
+                                        | {p.raw_metric || `M:${p.metric} AD:${p.admin_distance}`}
+                                      </span>
                                     </li>
                                   ))}
                                 </ul>
@@ -633,17 +774,39 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({
                             </div>
 
                             <div className="bg-white rounded-lg border border-slate-200 p-3">
-                              <div className="font-semibold text-slate-700 mb-2">
-                                After Change Paths ({entry.after_paths.length})
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <span className="font-semibold text-slate-700">
+                                  After Change Paths ({entry.after_paths.length})
+                                </span>
+                                {addEntries > 0 && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700">
+                                    +{addEntries} added
+                                  </span>
+                                )}
                               </div>
-                              {entry.after_paths.length === 0 ? (
-                                <p className="text-red-500 italic">Removed in post-change table</p>
+                              {annotatedPaths.after.length === 0 ? (
+                                <p className="text-red-600 italic font-medium">
+                                  Removed in post-change table
+                                </p>
                               ) : (
                                 <ul className="space-y-1 font-mono">
-                                  {entry.after_paths.map((p, idx) => (
-                                    <li key={idx} className="text-slate-700">
-                                      NH: {p.next_hop || '(overlay)'} | IF: {p.interface || '-'} |{' '}
-                                      {p.raw_metric || `M:${p.metric} AD:${p.admin_distance}`}
+                                  {annotatedPaths.after.map(({ path: p, status }, idx) => (
+                                    <li
+                                      key={idx}
+                                      data-path-status={status}
+                                      className={
+                                        status === 'added'
+                                          ? 'flex items-start gap-2 px-2 py-1 rounded bg-emerald-50/90 text-emerald-700 border-l-2 border-emerald-500 font-medium'
+                                          : 'flex items-start gap-2 px-2 py-1 rounded text-slate-500'
+                                      }
+                                    >
+                                      <span className="font-bold select-none shrink-0">
+                                        {status === 'added' ? '[+]' : '[=]'}
+                                      </span>
+                                      <span>
+                                        NH: {p.next_hop || '(overlay)'} | IF: {p.interface || '-'}{' '}
+                                        | {p.raw_metric || `M:${p.metric} AD:${p.admin_distance}`}
+                                      </span>
                                     </li>
                                   ))}
                                 </ul>

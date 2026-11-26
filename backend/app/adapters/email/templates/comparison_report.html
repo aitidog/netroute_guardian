@@ -76,7 +76,12 @@
             <td>
               <span class="stat-num" style="color:#b45309;">{{ stats.changed_count }}</span>
               <span class="stat-label">Changed Prefixes</span>
-              <span style="display:block; font-size:11px; color:#92400e; margin-top:2px;">-{{ stats.changed_removed_entries_count }} / +{{ stats.changed_added_entries_count }} entries</span>
+              <span style="display:block; font-size:11px; margin-top:2px;">
+                <span style="color:#b91c1c; font-weight:600;">-{{ stats.changed_removed_entries_count }}</span>
+                <span style="color:#94a3b8;"> / </span>
+                <span style="color:#15803d; font-weight:600;">+{{ stats.changed_added_entries_count }}</span>
+                <span style="color:#64748b;"> entries</span>
+              </span>
             </td>
             <td>
               <span class="stat-num" style="color:#991b1b;">{{ stats.important_count }}</span>
@@ -111,7 +116,7 @@
             {% set rem_cnt = item.removed_paths | length %}
             {% set add_cnt = item.added_paths | length %}
             <tr style="background:#fef2f2; border-left:4px solid #dc2626;">
-              <td class="mono">
+              <td class="mono" style="color:{% if item.change_type == 'removed' %}#b91c1c{% elif item.change_type == 'added' %}#15803d{% else %}#b45309{% endif %};">
                 {{ item.prefix }}
                 <span class="badge badge-important" style="font-size:10px; padding:1px 6px; margin-left:4px;">IMPORTANT</span>
                 <br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span>
@@ -119,10 +124,10 @@
               <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
               <td class="mono" style="white-space:nowrap;">
                 {{ b_cnt }} &rarr; {{ a_cnt }}<br />
-                <span style="font-size:11px; font-weight:400; color:#475569;">
-                  {% if item.change_type == 'removed' %}-{{ rem_cnt }} entries
-                  {% elif item.change_type == 'added' %}+{{ add_cnt }} entries
-                  {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
+                <span style="font-size:11px; font-weight:600;">
+                  {% if item.change_type == 'removed' %}<span style="color:#b91c1c;">-{{ rem_cnt }} entries</span>
+                  {% elif item.change_type == 'added' %}<span style="color:#15803d;">+{{ add_cnt }} entries</span>
+                  {% else %}<span style="color:#b91c1c;">-{{ rem_cnt }}</span> <span style="color:#94a3b8; font-weight:400;">/</span> <span style="color:#15803d;">+{{ add_cnt }}</span> <span style="color:#64748b; font-weight:400;">entries</span>{% endif %}
                 </span>
               </td>
               <td>
@@ -159,14 +164,14 @@
             {% set rem_cnt = item.removed_paths | length %}
             {% set add_cnt = item.added_paths | length %}
             <tr>
-              <td class="mono">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
+              <td class="mono" style="color:{% if item.change_type == 'removed' %}#b91c1c{% elif item.change_type == 'added' %}#15803d{% else %}#b45309{% endif %};">{{ item.prefix }}<br /><span style="color:#64748b; font-weight:400; font-size:11px;">VRF: {{ item.vrf }}</span></td>
               <td><span class="badge badge-{{ item.change_type }}">{{ item.change_type | upper }}</span></td>
               <td class="mono" style="white-space:nowrap;">
                 {{ b_cnt }} &rarr; {{ a_cnt }}<br />
-                <span style="font-size:11px; font-weight:400; color:#475569;">
-                  {% if item.change_type == 'removed' %}-{{ rem_cnt }} entries
-                  {% elif item.change_type == 'added' %}+{{ add_cnt }} entries
-                  {% else %}-{{ rem_cnt }} / +{{ add_cnt }} entries{% endif %}
+                <span style="font-size:11px; font-weight:600;">
+                  {% if item.change_type == 'removed' %}<span style="color:#b91c1c;">-{{ rem_cnt }} entries</span>
+                  {% elif item.change_type == 'added' %}<span style="color:#15803d;">+{{ add_cnt }} entries</span>
+                  {% else %}<span style="color:#b91c1c;">-{{ rem_cnt }}</span> <span style="color:#94a3b8; font-weight:400;">/</span> <span style="color:#15803d;">+{{ add_cnt }}</span> <span style="color:#64748b; font-weight:400;">entries</span>{% endif %}
                 </span>
               </td>
               <td>{{ item.explanation }}</td>

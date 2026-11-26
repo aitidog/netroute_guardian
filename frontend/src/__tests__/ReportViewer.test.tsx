@@ -1,6 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { buildComparisonCsv, ReportViewer } from '../components/ReportViewer';
+import {
+  annotatePathDiffs,
+  buildComparisonCsv,
+  ReportViewer,
+} from '../components/ReportViewer';
 import type { ComparisonReport } from '../types';
 
 const mockReport: ComparisonReport = {
@@ -285,5 +289,95 @@ describe('ReportViewer', () => {
       URL.revokeObjectURL = origRevoke;
       clickSpy.mockRestore();
     }
+  });
+
+  it('color-codes removed (red), added (green), and unchanged (muted) route entries in summary and expanded path details', async () => {
+    const sharedPath = {
+      next_hop: '10.1.0.1',
+      interface: 'eth0',
+      protocol: 'bgp',
+      admin_distance: 20,
+      metric: 100,
+      peer_priority: null,
+      raw_metric: '100 (AD:20)',
+    };
+    const removedPath = {
+      next_hop: '10.1.0.2',
+      interface: 'eth1',
+      protocol: 'bgp',
+      admin_distance: 20,
+      metric: 200,
+      peer_priority: null,
+      raw_metric: '200 (AD:20)',
+    };
+    const addedPath = {
+      next_hop: '10.1.0.3',
+      interface: 'eth2',
+      protocol: 'bgp',
+      admin_distance: 20,
+      metric: 50,
+      peer_priority: null,
+      raw_metric: '50 (AD:20)',
+    };
+
+    const changedEntry = {
+      ...mockReport.report_payload.important_entries[0],
+      prefix: '0.0.0.0/0',
+      prefix_len: 0,
+      change_type: 'changed' as const,
+      before_paths: [sharedPath, removedPath],
+      after_paths: [sharedPath, addedPath],
+      removed_paths: [removedPath],
+      added_paths: [addedPath],
+      unchanged_path_count: 1,
+      importance_reasons: ['Pre-specified critical route (0.0.0.0/0)'],
+    };
+
+    const diffCheck = annotatePathDiffs(changedEntry);
+    expect(diffCheck.before.map((x) => x.status)).toEqual(['unchanged', 'removed']);
+    expect(diffCheck.after.map((x) => x.status)).toEqual(['unchanged', 'added']);
+
+    const reportWithChanged: ComparisonReport = {
+      ...mockReport,
+      report_payload: {
+        ...mockReport.report_payload,
+        important_entries: [mockReport.report_payload.important_entries[0], changedEntry],
+        all_entries: [
+          mockReport.report_payload.important_entries[0],
+          changedEntry,
+          ...mockReport.report_payload.normal_entries,
+        ],
+      },
+    };
+
+    const user = userEvent.setup();
+    render(<ReportViewer report={reportWithChanged} />);
+
+    // Prefix text carries semantic colors: removed -> red, changed -> amber
+    expect(screen.getByText('10.132.0.0/14')).toHaveClass('text-red-700');
+    expect(screen.getByText('0.0.0.0/0')).toHaveClass('text-amber-800');
+
+    // Expand changed entry to inspect path-level colors
+    await user.click(screen.getByText('0.0.0.0/0'));
+    const removedItem = screen.getByText(/NH: 10\.1\.0\.2/).closest('li');
+    const addedItem = screen.getByText(/NH: 10\.1\.0\.3/).closest('li');
+    const unchangedItems = screen.getAllByText(/NH: 10\.1\.0\.1/).map((el) => el.closest('li'));
+
+    expect(removedItem).toHaveAttribute('data-path-status', 'removed');
+    expect(removedItem).toHaveClass('text-red-700');
+    expect(addedItem).toHaveAttribute('data-path-status', 'added');
+    expect(addedItem).toHaveClass('text-emerald-700');
+    for (const item of unchangedItems) {
+      expect(item).toHaveAttribute('data-path-status', 'unchanged');
+      expect(item).toHaveClass('text-slate-500');
+    }
+
+    // Switch to Normal tab and verify added prefix + expanded added path are green
+    await user.click(screen.getByRole('button', { name: /Normal Differences/i }));
+    expect(screen.getByText('10.156.43.128/25')).toHaveClass('text-emerald-700');
+    await user.click(screen.getByText('10.156.43.128/25'));
+    const normalAddedItem = screen.getByText(/50 \(AD:15\)/).closest('li');
+    expect(normalAddedItem).toHaveAttribute('data-path-status', 'added');
+    expect(normalAddedItem).toHaveClass('text-emerald-700');
   });
 });

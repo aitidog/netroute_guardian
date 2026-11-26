@@ -61,27 +61,37 @@ flowchart LR
 
 ## 3. Backend Layered Architecture
 
-The backend (`backend/app/`) enforces strict directional dependencies across five layers:
+The backend (`backend/app/`) enforces strict directional **Async Route → Service → Repository** separation (verified automatically via AST tests in `backend/tests/test_architecture.py` so neither routes nor services can import SQLAlchemy or query the database directly):
 
 ```text
 app/
-├── api/v1/router.py          # Transport layer: HTTP validation, status codes, dependency injection
-├── services/                 # Application orchestration: transactions, concurrency fan-out, seed data
-│   ├── change_service.py     # ServiceNow sync, T-1h pre-capture, post-capture + diff + email
+├── api/v1/router.py          # Async HTTP Route layer: validation, dependency injection, service delegation only
+├── services/                 # Business orchestration layer: workflows, concurrency fan-out, seed data (zero SQLAlchemy)
+│   ├── change_service.py     # ServiceNow sync, T-1h pre-capture, post-capture + diff + CSV/email
 │   ├── summary_service.py    # Device lookup (IP/hostname) & ad-hoc text/file summarization
-│   └── seed.py               # Idempotent initial demo inventory, critical routes & settings
+│   ├── resource_services.py  # ImportantRouteService, DeviceService, SimulatorService, SettingsService
+│   └── seed.py               # Idempotent initial demo inventory, critical routes & settings via repositories
+├── repositories/             # Persistence layer: sole owner of SQLAlchemy queries, commits & row locking
+│   ├── bundle.py             # Request-scoped RepositoryBundle (Unit of Work) & get_repositories dependency
+│   ├── change_repo.py        # ChangeRequest & CI links + FOR UPDATE SKIP LOCKED claiming
+│   ├── device_repo.py        # Network device inventory queries
+│   ├── important_route_repo.py # Pre-specified critical route CRUD
+│   ├── snapshot_repo.py      # Point-in-time RouteSnapshot persistence
+│   ├── report_repo.py        # ComparisonReport persistence & email delivery status
+│   ├── mock_snow_repo.py     # Simulated ServiceNow ticket store
+│   └── settings_repo.py      # Runtime key-value AppSetting access
 ├── pipelines/                # Pure CPU-bound domain engines (100% picklable, zero DB/HTTP coupling)
 │   ├── base.py               # PipelineStage[Ctx] ABC, PipelineRunner[Ctx], StageTrace telemetry
-│   ├── comparison/           # Feature 1: 5-stage comparison & network semantic analysis pipeline
+│   ├── comparison/           # Feature 1: 5-stage comparison & evidence-based analysis pipeline
 │   └── summary/              # Feature 2: 4-stage monotonic-stack route summarization pipeline
 ├── adapters/                 # External integration boundaries (Swappable Live vs Mock)
 │   ├── servicenow/           # ServiceNowProvider ABC -> RealServiceNowProvider / MockServiceNowProvider
 │   ├── devices/              # DeviceCollector ABC -> EdgeConnect / CiscoNexus / CiscoRouter + real parsers
-│   └── email/                # Jinja2 HTML template + async SMTP sender
+│   └── email/                # Jinja2 HTML template, row-expanded CSV exporter & async SMTP sender
 ├── scheduler/jobs.py         # APScheduler periodic sync & due-job dispatch loop
 ├── models/entities.py        # SQLAlchemy 2.0 ORM schema
 ├── schemas/dto.py            # Pydantic v2 DTOs & CIDR/email validators
-└── core/                     # Typed config, DB engine/session factory, concurrency primitives
+└── core/                     # Typed config, domain exceptions, DB engine/session factory, concurrency primitives
 ```
 
 ---
@@ -346,8 +356,8 @@ erDiagram
 ## 10. Quality Assurance, Security & Production Hardening
 
 ### Verification & Test Coverage
-- **Backend (`uv run pytest`)**: 26 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, LPM egress mismatch detection, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & async SMTP mocking, and end-to-end REST API integration.
-- **Frontend (`npm test`)**: Vitest + React Testing Library component and interaction suites covering `ReportViewer`, `RouteSummaryPage`, `ImportantRoutesPage`, `ChangesPage`, and `SimulatorPage`, plus strict `tsc -b` typechecking.
+- **Backend (`uv run pytest`)**: 31 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, evidence-based covering-prefix diagnostics, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & row-expanded CSV attachments, Repository layer unit tests, AST architectural boundary enforcement (zero SQLAlchemy in routes/services & 100% async routes), and end-to-end REST API integration.
+- **Frontend (`npm test`)**: 7 Vitest + React Testing Library component and interaction suites covering `ReportViewer` (filtering, `IMPORTANT` highlighting, row-expanded CSV export), `RouteSummaryPage`, `ImportantRoutesPage`, `ChangesPage`, and `SimulatorPage`, plus strict `tsc -b` typechecking.
 
 ### Production Deployment Checklist
 1. **Least-Privilege Credentials**: Use read-only API tokens/accounts for ServiceNow (`change_request`, `task_ci`, `sys_user`) and network devices (`show ip route` / read-only Orchestrator role); inject secrets via Vault/Kubernetes Secrets rather than `.env` files.

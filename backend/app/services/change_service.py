@@ -1,36 +1,37 @@
-"""Core orchestration service for ServiceNow sync, concurrent capture, parallel diffing, and email."""
+"""Service layer for ServiceNow sync, concurrent capture, parallel diffing, reports, and email."""
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
-
 from app.adapters.devices.base import NormalizedRoute
+from app.adapters.devices.parsers import auto_parse_routing_text, parse_edgeconnect_csv
 from app.adapters.devices.registry import ConcurrentDeviceCollector
+from app.adapters.email.csv_exporter import format_comparison_reports_csv, sanitize_filename_token
 from app.adapters.email.sender import EmailReportSender
 from app.adapters.servicenow.base import ServiceNowProvider
 from app.adapters.servicenow.mock_provider import MockServiceNowProvider
 from app.adapters.servicenow.real_provider import RealServiceNowProvider
 from app.core.concurrency import PipelineExecutor
 from app.core.config import Settings
-from app.models.entities import (
-    AppSetting,
-    ChangeDeviceLink,
-    ChangeRequest,
-    ComparisonReport,
-    Device,
-    ImportantRoute,
-    RouteSnapshot,
-    utcnow,
-)
+from app.core.exceptions import DomainValidationError, ResourceNotFoundError
+from app.models.entities import ChangeRequest, ComparisonReport, utcnow
 from app.pipelines.comparison.context import ComparisonInput
 from app.pipelines.comparison.pipeline import run_comparison_pipeline
+from app.repositories.bundle import RepositoryBundle
+from app.schemas.dto import (
+    ComparisonReportDetailRead,
+    ComparisonReportSummaryRead,
+    DeviceRead,
+    SnapshotSummaryRead,
+)
 
 logger = logging.getLogger(__name__)
+
+_RISK_ORDER = {"PASS": 0, "INFO": 1, "LOW": 2, "MEDIUM": 3, "HIGH": 4, "CRITICAL": 5}
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -39,28 +40,65 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
-def get_int_setting(db: Session, key: str, default: int) -> int:
-    rec = db.get(AppSetting, key)
-    if rec is None:
-        return default
-    try:
-        return int(rec.value)
-    except ValueError:
-        return default
-
-
-def build_servicenow_provider(db: Session, settings: Settings) -> ServiceNowProvider:
+def build_servicenow_provider(repos: RepositoryBundle, settings: Settings) -> ServiceNowProvider:
     if settings.servicenow_mode == "live":
         return RealServiceNowProvider(
             instance_url=settings.servicenow_instance_url,
             username=settings.servicenow_username,
             password=settings.servicenow_password,
         )
-    return MockServiceNowProvider(db)
+    return MockServiceNowProvider(repos.mock_servicenow)
+
+
+def serialize_change(change: ChangeRequest, *, include_detail: bool = False) -> dict[str, Any]:
+    devices = [
+        DeviceRead.model_validate(link.device) for link in change.device_links if link.device is not None
+    ]
+    pre_snaps = [s for s in change.snapshots if s.phase == "pre_change"]
+    post_snaps = [s for s in change.snapshots if s.phase == "post_change"]
+    reports = sorted(change.reports, key=lambda r: r.created_at, reverse=True)
+
+    highest_risk: str | None = None
+    for rep in reports:
+        if highest_risk is None or _RISK_ORDER.get(rep.risk_level, 0) > _RISK_ORDER.get(highest_risk, 0):
+            highest_risk = rep.risk_level
+
+    base: dict[str, Any] = {
+        "id": change.id,
+        "chg_number": change.chg_number,
+        "title": change.title,
+        "description": change.description,
+        "scheduled_start": change.scheduled_start,
+        "scheduled_end": change.scheduled_end,
+        "capture_scheduled_at": change.capture_scheduled_at,
+        "engineer_name": change.engineer_name,
+        "engineer_email": change.engineer_email,
+        "status": change.status,
+        "sync_source": change.sync_source,
+        "retry_count": change.retry_count,
+        "last_error": change.last_error,
+        "synced_at": change.synced_at,
+        "updated_at": change.updated_at,
+        "devices": devices,
+        "pre_snapshot_count": len(pre_snaps),
+        "post_snapshot_count": len(post_snaps),
+        "report_count": len(reports),
+        "highest_risk_level": highest_risk,
+    }
+    if include_detail:
+        base["snapshots"] = [
+            SnapshotSummaryRead.model_validate(s)
+            for s in sorted(change.snapshots, key=lambda x: x.captured_at, reverse=True)
+        ]
+        base["reports"] = [ComparisonReportDetailRead.model_validate(r) for r in reports]
+    return base
 
 
 class ChangeWorkflowService:
-    """Coordinates ServiceNow synchronization, concurrent device polling, and parallel diffing."""
+    """Coordinates ServiceNow synchronization, concurrent device polling, and parallel diffing.
+
+    All persistence is strictly delegated to ``RepositoryBundle`` with zero direct DB calls.
+    """
 
     def __init__(
         self,
@@ -79,15 +117,29 @@ class ChangeWorkflowService:
             timeout_seconds=settings.device_collection_timeout_seconds,
         )
 
+    async def list_changes(self, repos: RepositoryBundle) -> list[dict[str, Any]]:
+        changes = await repos.changes.list_with_relations()
+        return [serialize_change(c, include_detail=False) for c in changes]
+
+    async def get_change_detail(self, repos: RepositoryBundle, change_id: int) -> dict[str, Any]:
+        change = await repos.changes.get_with_relations(change_id)
+        if change is None:
+            raise ResourceNotFoundError("Change request not found")
+        return serialize_change(change, include_detail=True)
+
     async def sync_from_servicenow(
         self,
-        db: Session,
+        repos: RepositoryBundle,
         provider: ServiceNowProvider | None = None,
     ) -> list[ChangeRequest]:
         """Poll ServiceNow for scheduled changes inside the configured window and upsert DB jobs."""
-        active_provider = provider or build_servicenow_provider(db, self.settings)
-        window_hours = get_int_setting(db, "servicenow_window_hours", self.settings.servicenow_window_hours)
-        lead_minutes = get_int_setting(db, "pre_capture_lead_minutes", self.settings.pre_capture_lead_minutes)
+        active_provider = provider or build_servicenow_provider(repos, self.settings)
+        window_hours = await repos.settings.get_int(
+            "servicenow_window_hours", self.settings.servicenow_window_hours
+        )
+        lead_minutes = await repos.settings.get_int(
+            "pre_capture_lead_minutes", self.settings.pre_capture_lead_minutes
+        )
 
         now = utcnow()
         window_start = now - timedelta(hours=2)
@@ -99,17 +151,12 @@ class ChangeWorkflowService:
         for dto in snow_changes:
             start_utc = _ensure_utc(dto.scheduled_start)
             capture_at = start_utc - timedelta(minutes=lead_minutes)
-
-            existing = db.scalar(
-                select(ChangeRequest)
-                .options(selectinload(ChangeRequest.device_links))
-                .where(ChangeRequest.chg_number == dto.chg_number)
-            )
+            existing = await repos.changes.get_by_chg_number_with_links(dto.chg_number)
 
             if existing is None:
                 if dto.state == "cancelled":
                     continue
-                change = ChangeRequest(
+                change = await repos.changes.create(
                     chg_number=dto.chg_number,
                     title=dto.title,
                     description=dto.description,
@@ -122,8 +169,6 @@ class ChangeWorkflowService:
                     sync_source=active_provider.source_name,
                     synced_at=now,
                 )
-                db.add(change)
-                db.flush()
             else:
                 change = existing
                 change.title = dto.title
@@ -137,65 +182,49 @@ class ChangeWorkflowService:
                     if change.status in ("synced", "failed"):
                         change.status = "cancelled"
                 else:
-                    # Reschedule T-1h capture whenever ServiceNow shifts start_date.
                     change.scheduled_start = start_utc
                     change.capture_scheduled_at = capture_at
                     if change.status == "cancelled":
                         change.status = "synced"
 
-            # Resolve associated CIs by device ID or hostname
-            resolved_ids = self._resolve_device_ids(db, dto.ci_device_ids, dto.ci_hostnames)
+            resolved_ids = await self._resolve_device_ids(repos, dto.ci_device_ids, dto.ci_hostnames)
             if resolved_ids:
-                current_ids = {link.device_id for link in change.device_links}
-                if current_ids != set(resolved_ids):
-                    change.device_links.clear()
-                    db.flush()
-                    for dev_id in resolved_ids:
-                        db.add(ChangeDeviceLink(change_id=change.id, device_id=dev_id))
+                await repos.changes.replace_device_links(change, resolved_ids)
 
             synced.append(change)
 
-        db.commit()
+        await repos.commit()
         return synced
 
-    def _resolve_device_ids(
+    async def _resolve_device_ids(
         self,
-        db: Session,
+        repos: RepositoryBundle,
         ci_device_ids: list[int],
         ci_hostnames: list[str],
     ) -> list[int]:
         ids: list[int] = []
         if ci_device_ids:
-            found = db.scalars(select(Device.id).where(Device.id.in_(ci_device_ids))).all()
-            ids.extend(found)
+            ids.extend(await repos.devices.find_ids_by_ids(ci_device_ids))
         if ci_hostnames:
-            found_by_host = db.scalars(select(Device.id).where(Device.hostname.in_(ci_hostnames))).all()
-            ids.extend(found_by_host)
-        # Preserve order while deduplicating
+            ids.extend(await repos.devices.find_ids_by_hostnames(ci_hostnames))
         return list(dict.fromkeys(ids))
 
-    async def capture_pre_change(self, db: Session, change_id: int) -> dict[str, Any]:
+    async def capture_pre_change(self, repos: RepositoryBundle, change_id: int) -> dict[str, Any]:
         """Collect pre-change routing tables concurrently across all CIs linked to a Change."""
-        change = db.scalar(
-            select(ChangeRequest)
-            .options(selectinload(ChangeRequest.device_links).selectinload(ChangeDeviceLink.device))
-            .where(ChangeRequest.id == change_id)
-        )
+        change = await repos.changes.get_with_devices(change_id)
         if change is None:
-            raise ValueError(f"Change request {change_id} not found")
+            raise DomainValidationError(f"Change request {change_id} not found")
 
         devices = [link.device for link in change.device_links if link.device is not None]
         if not devices:
-            raise ValueError(f"Change request {change.chg_number} has no associated CI devices")
+            raise DomainValidationError(f"Change request {change.chg_number} has no associated CI devices")
 
-        change.status = "pre_capturing"
-        change.last_error = None
-        db.commit()
+        await repos.changes.save_status(change, status="pre_capturing", last_error=None)
 
         outcome = await self.device_collector.collect_many(devices, phase="pre_change")
 
         for res in outcome.succeeded:
-            snap = RouteSnapshot(
+            await repos.snapshots.create(
                 device_id=res.device_id,
                 change_id=change.id,
                 device_label=res.hostname,
@@ -205,22 +234,18 @@ class ChangeWorkflowService:
                 unique_prefix_count=res.unique_prefix_count,
                 routes_json=[r.to_dict() for r in res.routes],
             )
-            db.add(snap)
 
         if outcome.succeeded and not outcome.failed:
-            change.status = "pre_captured"
-            change.last_error = None
+            await repos.changes.save_status(change, status="pre_captured", last_error=None)
         elif outcome.succeeded and outcome.failed:
-            change.status = "pre_captured"
-            change.last_error = "Partial pre-capture failure: " + "; ".join(
+            err = "Partial pre-capture failure: " + "; ".join(
                 f"{f['hostname']} ({f['error']})" for f in outcome.failed
             )
+            await repos.changes.save_status(change, status="pre_captured", last_error=err)
         else:
-            change.status = "failed"
-            change.retry_count += 1
-            change.last_error = "; ".join(f"{f['hostname']} ({f['error']})" for f in outcome.failed)
+            err = "; ".join(f"{f['hostname']} ({f['error']})" for f in outcome.failed)
+            await repos.changes.save_status(change, status="failed", last_error=err, increment_retry=True)
 
-        db.commit()
         return {
             "change_id": change.id,
             "chg_number": change.chg_number,
@@ -231,46 +256,32 @@ class ChangeWorkflowService:
             "email_status": None,
         }
 
-    async def capture_post_change_and_compare(self, db: Session, change_id: int) -> dict[str, Any]:
-        """Collect post-change routes concurrently, run parallel comparisons, and email the engineer."""
-        change = db.scalar(
-            select(ChangeRequest)
-            .options(selectinload(ChangeRequest.device_links).selectinload(ChangeDeviceLink.device))
-            .where(ChangeRequest.id == change_id)
-        )
+    async def capture_post_change_and_compare(
+        self, repos: RepositoryBundle, change_id: int
+    ) -> dict[str, Any]:
+        """Collect post-change routes concurrently, run parallel comparisons, and email engineer."""
+        change = await repos.changes.get_with_devices(change_id)
         if change is None:
-            raise ValueError(f"Change request {change_id} not found")
+            raise DomainValidationError(f"Change request {change_id} not found")
 
         devices = [link.device for link in change.device_links if link.device is not None]
         if not devices:
-            raise ValueError(f"Change request {change.chg_number} has no associated CI devices")
+            raise DomainValidationError(f"Change request {change.chg_number} has no associated CI devices")
 
-        # Locate latest pre-change snapshot per device
-        pre_snaps_all = db.scalars(
-            select(RouteSnapshot)
-            .where(RouteSnapshot.change_id == change.id, RouteSnapshot.phase == "pre_change")
-            .order_by(RouteSnapshot.captured_at.desc())
-        ).all()
-        pre_by_device: dict[int, RouteSnapshot] = {}
-        for snap in pre_snaps_all:
-            if snap.device_id is not None and snap.device_id not in pre_by_device:
-                pre_by_device[snap.device_id] = snap
-
+        pre_by_device = await repos.snapshots.get_latest_by_device_for_change(change.id, phase="pre_change")
         if not pre_by_device:
-            raise ValueError(
+            raise DomainValidationError(
                 f"No pre-change snapshots found for {change.chg_number}. "
                 "Please wait for T-1h pre-capture or trigger pre-change capture first."
             )
 
-        change.status = "post_capturing"
-        db.commit()
+        await repos.changes.save_status(change, status="post_capturing", last_error=change.last_error)
 
-        # Step 1: Concurrent I/O-bound device collection across all CIs
         outcome = await self.device_collector.collect_many(devices, phase="post_change")
 
-        post_by_device: dict[int, RouteSnapshot] = {}
+        post_by_device = {}
         for res in outcome.succeeded:
-            snap = RouteSnapshot(
+            snap = await repos.snapshots.create(
                 device_id=res.device_id,
                 change_id=change.id,
                 device_label=res.hostname,
@@ -280,21 +291,16 @@ class ChangeWorkflowService:
                 unique_prefix_count=res.unique_prefix_count,
                 routes_json=[r.to_dict() for r in res.routes],
             )
-            db.add(snap)
-            db.flush()
             if res.device_id is not None:
                 post_by_device[res.device_id] = snap
 
-        # Step 2: Parallel CPU-bound comparison pipelines via ProcessPoolExecutor / ThreadPoolExecutor
-        important_prefixes = list(
-            db.scalars(select(ImportantRoute.prefix).where(ImportantRoute.enabled.is_(True))).all()
-        )
-        large_threshold = get_int_setting(
-            db, "large_prefix_threshold", self.settings.default_large_prefix_threshold
+        important_prefixes = await repos.important_routes.list_enabled_prefixes()
+        large_threshold = await repos.settings.get_int(
+            "large_prefix_threshold", self.settings.default_large_prefix_threshold
         )
 
-        compare_pairs: list[tuple[Device, RouteSnapshot, RouteSnapshot]] = []
-        pipeline_args: list[tuple[ComparisonInput]] = []
+        compare_pairs = []
+        pipeline_args = []
         for dev in devices:
             if dev.id in pre_by_device and dev.id in post_by_device:
                 pre_snap = pre_by_device[dev.id]
@@ -316,7 +322,7 @@ class ChangeWorkflowService:
 
         created_reports: list[ComparisonReport] = []
         for (dev, pre_snap, post_snap), payload in zip(compare_pairs, report_payloads, strict=True):
-            rep = ComparisonReport(
+            rep = await repos.reports.create(
                 change_id=change.id,
                 device_id=dev.id,
                 device_label=dev.hostname,
@@ -328,11 +334,8 @@ class ChangeWorkflowService:
                 email_recipient=change.engineer_email,
                 email_status="pending",
             )
-            db.add(rep)
-            db.flush()
             created_reports.append(rep)
 
-        # Step 3: Deliver consolidated HTML report email to the engineer's mailbox
         email_status = "skipped"
         if created_reports:
             delivery = await self.email_sender.send_comparison_report(
@@ -343,20 +346,25 @@ class ChangeWorkflowService:
                 reports=[r.report_payload for r in created_reports],
             )
             email_status = delivery.status
-            sent_ts = utcnow() if delivery.status == "sent" else None
-            for rep in created_reports:
-                rep.email_status = delivery.status
-                rep.email_error = delivery.error
-                rep.email_sent_at = sent_ts
-
-        change.status = "completed" if created_reports else "failed"
-        if outcome.failed:
-            change.last_error = "Post-capture device error(s): " + "; ".join(
-                f"{f['hostname']} ({f['error']})" for f in outcome.failed
+            await repos.reports.update_email_delivery(
+                created_reports,
+                status=delivery.status,
+                error=delivery.error,
+                sent_at=utcnow() if delivery.status == "sent" else None,
+                commit=False,
             )
-        else:
-            change.last_error = None
-        db.commit()
+
+        err_msg = (
+            "Post-capture device error(s): "
+            + "; ".join(f"{f['hostname']} ({f['error']})" for f in outcome.failed)
+            if outcome.failed
+            else None
+        )
+        await repos.changes.save_status(
+            change,
+            status="completed" if created_reports else "failed",
+            last_error=err_msg,
+        )
 
         return {
             "change_id": change.id,
@@ -364,13 +372,117 @@ class ChangeWorkflowService:
             "phase": "post_change",
             "succeeded_devices": [r.hostname for r in outcome.succeeded],
             "failed_devices": outcome.failed,
-            "reports_generated": created_reports,
+            "reports_generated": [ComparisonReportSummaryRead.model_validate(r) for r in created_reports],
             "email_status": email_status,
         }
 
+    async def list_reports(self, repos: RepositoryBundle) -> list[ComparisonReport]:
+        return await repos.reports.list_recent(limit=50)
+
+    async def get_report(self, repos: RepositoryBundle, report_id: int) -> ComparisonReport:
+        report = await repos.reports.get_by_id(report_id)
+        if report is None:
+            raise ResourceNotFoundError("Comparison report not found")
+        return report
+
+    async def export_report_csv(self, repos: RepositoryBundle, report_id: int) -> tuple[str, bytes]:
+        report = await self.get_report(repos, report_id)
+        csv_text = format_comparison_reports_csv([report.report_payload])
+        filename = f"route-comparison-{sanitize_filename_token(report.device_label)}-{report.id}.csv"
+        return filename, ("\ufeff" + csv_text).encode("utf-8")
+
+    async def preview_report_email(self, repos: RepositoryBundle, report_id: int) -> dict[str, str]:
+        report = await self.get_report(repos, report_id)
+        chg = await repos.changes.get_by_id(report.change_id) if report.change_id else None
+        subject, html_body = self.email_sender.render_html(
+            chg_number=chg.chg_number if chg else f"ADHOC-{report.id}",
+            change_title=chg.title if chg else f"Ad-hoc Comparison ({report.device_label})",
+            engineer_name=chg.engineer_name if chg else "Network Engineer",
+            recipient_email=report.email_recipient
+            or (chg.engineer_email if chg else "engineer@netops.local"),
+            reports=[report.report_payload],
+        )
+        return {"subject": subject, "html": html_body}
+
+    async def resend_report_email(
+        self,
+        repos: RepositoryBundle,
+        report_id: int,
+        *,
+        recipient_email: str | None = None,
+    ) -> dict[str, Any]:
+        report = await self.get_report(repos, report_id)
+        chg = await repos.changes.get_by_id(report.change_id) if report.change_id else None
+        target_email = recipient_email or report.email_recipient or (chg.engineer_email if chg else None)
+        if not target_email:
+            raise DomainValidationError("No recipient email address specified")
+
+        delivery = await self.email_sender.send_comparison_report(
+            chg_number=chg.chg_number if chg else f"ADHOC-{report.id}",
+            change_title=chg.title if chg else f"Ad-hoc Comparison ({report.device_label})",
+            engineer_name=chg.engineer_name if chg else "Network Engineer",
+            recipient_email=target_email,
+            reports=[report.report_payload],
+        )
+        await repos.reports.update_email_delivery(
+            [report],
+            recipient=target_email,
+            status=delivery.status,
+            error=delivery.error,
+            sent_at=utcnow() if delivery.status == "sent" else None,
+            commit=True,
+        )
+        return {
+            "report_id": report.id,
+            "recipient_email": target_email,
+            "status": delivery.status,
+            "error": delivery.error,
+        }
+
+    async def compare_uploaded_texts(
+        self,
+        repos: RepositoryBundle,
+        *,
+        before_text: str,
+        after_text: str,
+        device_label: str,
+    ) -> ComparisonReport:
+        try:
+            before_routes = auto_parse_routing_text(before_text, label=device_label)
+            after_routes = auto_parse_routing_text(after_text, label=device_label)
+        except ValueError as exc:
+            raise DomainValidationError(str(exc)) from exc
+
+        if not before_routes or not after_routes:
+            raise DomainValidationError(
+                "Both before and after files must contain at least one valid CIDR route"
+            )
+        return await self.run_adhoc_comparison(
+            repos,
+            device_label=device_label,
+            before_routes=before_routes,
+            after_routes=after_routes,
+        )
+
+    async def compare_demo_csv(self, repos: RepositoryBundle) -> ComparisonReport:
+        sample_dir = Path(self.settings.sample_data_dir)
+        before_path = sample_dir / "subnetsExample_beforeChange.csv"
+        after_path = sample_dir / "subnetsExample_afterChange.csv"
+        if not before_path.exists() or not after_path.exists():
+            raise ResourceNotFoundError("Demo CSV files not found on server")
+
+        before_routes = parse_edgeconnect_csv(before_path.read_text(encoding="utf-8-sig"))
+        after_routes = parse_edgeconnect_csv(after_path.read_text(encoding="utf-8-sig"))
+        return await self.run_adhoc_comparison(
+            repos,
+            device_label="uec-abc-prd01 (Sample CSV)",
+            before_routes=before_routes,
+            after_routes=after_routes,
+        )
+
     async def run_adhoc_comparison(
         self,
-        db: Session,
+        repos: RepositoryBundle,
         *,
         device_label: str,
         before_routes: list[NormalizedRoute],
@@ -380,7 +492,9 @@ class ChangeWorkflowService:
         before_dicts = [r.to_dict() for r in before_routes]
         after_dicts = [r.to_dict() for r in after_routes]
 
-        before_snap = RouteSnapshot(
+        before_snap = await repos.snapshots.create(
+            device_id=None,
+            change_id=None,
             device_label=device_label,
             phase="adhoc",
             source_type="csv_upload",
@@ -388,7 +502,9 @@ class ChangeWorkflowService:
             unique_prefix_count=len({(r["vrf"], r["prefix"]) for r in before_dicts}),
             routes_json=before_dicts,
         )
-        after_snap = RouteSnapshot(
+        after_snap = await repos.snapshots.create(
+            device_id=None,
+            change_id=None,
             device_label=device_label,
             phase="adhoc",
             source_type="csv_upload",
@@ -396,14 +512,10 @@ class ChangeWorkflowService:
             unique_prefix_count=len({(r["vrf"], r["prefix"]) for r in after_dicts}),
             routes_json=after_dicts,
         )
-        db.add_all([before_snap, after_snap])
-        db.flush()
 
-        important_prefixes = list(
-            db.scalars(select(ImportantRoute.prefix).where(ImportantRoute.enabled.is_(True))).all()
-        )
-        large_threshold = get_int_setting(
-            db, "large_prefix_threshold", self.settings.default_large_prefix_threshold
+        important_prefixes = await repos.important_routes.list_enabled_prefixes()
+        large_threshold = await repos.settings.get_int(
+            "large_prefix_threshold", self.settings.default_large_prefix_threshold
         )
 
         payload = await self.pipeline_executor.run(
@@ -417,7 +529,7 @@ class ChangeWorkflowService:
             ),
         )
 
-        report = ComparisonReport(
+        return await repos.reports.create(
             device_label=device_label,
             before_snapshot_id=before_snap.id,
             after_snapshot_id=after_snap.id,
@@ -425,34 +537,13 @@ class ChangeWorkflowService:
             summary_stats=payload["summary_stats"],
             report_payload=payload,
             email_status="skipped",
+            commit=True,
         )
-        db.add(report)
-        db.commit()
-        db.refresh(report)
-        return report
 
-    def claim_due_pre_capture_ids(self, db: Session, now: datetime | None = None) -> list[int]:
-        """Atomically claim Change Requests whose T-1h pre-capture window has arrived.
-
-        Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` on PostgreSQL so multiple backend
-        replicas cannot claim the same change simultaneously.
-        """
+    async def claim_due_pre_capture_ids(
+        self,
+        repos: RepositoryBundle,
+        now: datetime | None = None,
+    ) -> list[int]:
         cutoff = _ensure_utc(now or utcnow())
-        stmt = (
-            select(ChangeRequest)
-            .where(
-                ChangeRequest.status == "synced",
-                ChangeRequest.capture_scheduled_at <= cutoff,
-            )
-            .order_by(ChangeRequest.capture_scheduled_at.asc())
-        )
-        if db.bind is not None and db.bind.dialect.name == "postgresql":
-            stmt = stmt.with_for_update(skip_locked=True)
-
-        due_changes = list(db.scalars(stmt).all())
-        claimed_ids: list[int] = []
-        for chg in due_changes:
-            chg.status = "pre_capturing"
-            claimed_ids.append(chg.id)
-        db.commit()
-        return claimed_ids
+        return await repos.changes.claim_due_pre_capture_ids(cutoff)

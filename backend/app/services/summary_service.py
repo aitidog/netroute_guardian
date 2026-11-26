@@ -1,19 +1,18 @@
-"""Feature 2 service: device lookup by IP/hostname and route summarization pipeline execution."""
+"""Feature 2 service: device lookup via repository and route summarization pipeline execution."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
-
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
 
 from app.adapters.devices.parsers import auto_parse_routing_text
 from app.adapters.devices.registry import build_device_collector
 from app.core.concurrency import PipelineExecutor
 from app.core.config import Settings
-from app.models.entities import Device
+from app.core.exceptions import DomainValidationError, ResourceNotFoundError
 from app.pipelines.summary.context import SummaryInput
 from app.pipelines.summary.pipeline import run_summary_pipeline
+from app.repositories.bundle import RepositoryBundle
 
 
 class RouteSummaryService:
@@ -25,23 +24,16 @@ class RouteSummaryService:
 
     async def summarize_by_device_query(
         self,
-        db: Session,
+        repos: RepositoryBundle,
         *,
         query: str,
         include_supernet_suggestions: bool = False,
     ) -> dict[str, Any]:
-        """Resolve a device by IP address or hostname, fetch its routing table, and summarize."""
+        """Resolve a device by IP address or hostname via repository, fetch routes, and summarize."""
         cleaned = query.strip()
-        device = db.scalar(
-            select(Device).where(
-                or_(
-                    func.lower(Device.hostname) == cleaned.lower(),
-                    Device.ip_address == cleaned,
-                )
-            )
-        )
+        device = await repos.devices.get_by_hostname_or_ip(cleaned)
         if device is None:
-            raise ValueError(
+            raise ResourceNotFoundError(
                 f"Device '{cleaned}' not found in inventory (searched by hostname and IP address)"
             )
 
@@ -67,9 +59,13 @@ class RouteSummaryService:
         include_supernet_suggestions: bool = False,
     ) -> dict[str, Any]:
         """Parse uploaded CSV / Cisco CLI / plain CIDR text and run the summarization pipeline."""
-        routes = auto_parse_routing_text(raw_text, label=source_label)
+        try:
+            routes = auto_parse_routing_text(raw_text, label=source_label)
+        except ValueError as exc:
+            raise DomainValidationError(str(exc)) from exc
+
         if not routes:
-            raise ValueError("No valid CIDR routes could be parsed from the provided input")
+            raise DomainValidationError("No valid CIDR routes could be parsed from the provided input")
 
         return await self.pipeline_executor.run(
             run_summary_pipeline,
@@ -78,4 +74,19 @@ class RouteSummaryService:
                 routes=[r.to_dict() for r in routes],
                 include_supernet_suggestions=include_supernet_suggestions,
             ),
+        )
+
+    async def summarize_demo_csv(
+        self,
+        *,
+        include_supernet_suggestions: bool = False,
+    ) -> dict[str, Any]:
+        """Run Feature 2 summarization against the configured sample after-change CSV."""
+        after_path = Path(self.settings.sample_data_dir) / "subnetsExample_afterChange.csv"
+        if not after_path.exists():
+            raise ResourceNotFoundError("Demo CSV file not found on server")
+        return await self.summarize_raw_text(
+            raw_text=after_path.read_text(encoding="utf-8-sig"),
+            source_label="subnetsExample_afterChange.csv",
+            include_supernet_suggestions=include_supernet_suggestions,
         )

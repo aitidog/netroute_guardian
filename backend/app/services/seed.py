@@ -1,19 +1,11 @@
-"""Idempotent database seeding for demo devices, important routes, settings, and ServiceNow changes."""
+"""Idempotent database seeding routed strictly through the Repository layer."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.core.config import Settings
-from app.models.entities import (
-    AppSetting,
-    Device,
-    ImportantRoute,
-    MockServiceNowChange,
-)
+from app.repositories.bundle import RepositoryBundle
 
 DEFAULT_IMPORTANT_ROUTES = [
     ("0.0.0.0/0", "Default gateway / Internet & WAN fallback route"),
@@ -23,7 +15,7 @@ DEFAULT_IMPORTANT_ROUTES = [
 ]
 
 
-def seed_initial_data(db: Session, settings: Settings) -> None:
+async def seed_initial_data(repos: RepositoryBundle, settings: Settings) -> None:
     """Seed default settings, critical route rules, multi-vendor devices, and sample changes."""
     # 1. Runtime settings
     default_settings = {
@@ -41,14 +33,12 @@ def seed_initial_data(db: Session, settings: Settings) -> None:
         ),
     }
     for key, (val, desc) in default_settings.items():
-        if db.get(AppSetting, key) is None:
-            db.add(AppSetting(key=key, value=val, description=desc))
+        await repos.settings.ensure_default(key=key, value=val, description=desc)
 
     # 2. Pre-specified important routes from requirements
     for prefix, desc in DEFAULT_IMPORTANT_ROUTES:
-        exists = db.scalar(select(ImportantRoute).where(ImportantRoute.prefix == prefix))
-        if exists is None:
-            db.add(ImportantRoute(prefix=prefix, description=desc, enabled=True))
+        if await repos.important_routes.get_by_prefix(prefix) is None:
+            await repos.important_routes.create(prefix=prefix, description=desc, enabled=True, commit=False)
 
     # 3. Three multi-vendor demo devices (EdgeConnect CSV + Cisco Nexus + Cisco Router)
     demo_devices = [
@@ -87,56 +77,49 @@ def seed_initial_data(db: Session, settings: Settings) -> None:
         },
     ]
 
-    device_by_host: dict[str, Device] = {}
+    device_ids_by_host: dict[str, int] = {}
     for spec in demo_devices:
-        dev = db.scalar(select(Device).where(Device.hostname == spec["hostname"]))
+        dev = await repos.devices.get_by_hostname(spec["hostname"])
         if dev is None:
-            dev = Device(**spec)
-            db.add(dev)
-            db.flush()
-        device_by_host[spec["hostname"]] = dev
+            dev = await repos.devices.create(**spec, commit=False)
+        device_ids_by_host[spec["hostname"]] = dev.id
 
     # 4. Seed realistic simulated ServiceNow Change Requests if none exist yet
-    existing_snow = db.scalar(select(MockServiceNowChange.id).limit(1))
-    if existing_snow is None:
+    if not await repos.mock_servicenow.has_any():
         now = datetime.now(UTC)
-        ec_id = device_by_host["uec-abc-prd01"].id
-        nx_id = device_by_host["nx-dc1-core01"].id
-        rtr_id = device_by_host["rtr-hq-wan01"].id
+        ec_id = device_ids_by_host["uec-abc-prd01"]
+        nx_id = device_ids_by_host["nx-dc1-core01"]
+        rtr_id = device_ids_by_host["rtr-hq-wan01"]
 
-        # Change 1: Scheduled 45 minutes from now -> T-1h pre-capture is already due on startup!
-        db.add(
-            MockServiceNowChange(
-                chg_number="CHG0042108",
-                title="SD-WAN Hub & Core BGP Route Policy Cutover",
-                description=(
-                    "Scheduled WAN routing policy update across Aruba EdgeConnect hub "
-                    "uec-abc-prd01 and DC1 Cisco Nexus core nx-dc1-core01."
-                ),
-                scheduled_start=now + timedelta(minutes=45),
-                scheduled_end=now + timedelta(hours=2, minutes=45),
-                engineer_name="Alex Rivera",
-                engineer_email="alex.rivera@netops.local",
-                state="scheduled",
-                ci_device_ids=[ec_id, nx_id],
-            )
+        await repos.mock_servicenow.create(
+            chg_number="CHG0042108",
+            title="SD-WAN Hub & Core BGP Route Policy Cutover",
+            description=(
+                "Scheduled WAN routing policy update across Aruba EdgeConnect hub "
+                "uec-abc-prd01 and DC1 Cisco Nexus core nx-dc1-core01."
+            ),
+            scheduled_start=now + timedelta(minutes=45),
+            scheduled_end=now + timedelta(hours=2, minutes=45),
+            engineer_name="Alex Rivera",
+            engineer_email="alex.rivera@netops.local",
+            state="scheduled",
+            ci_device_ids=[ec_id, nx_id],
+            commit=False,
         )
-        # Change 2: Scheduled 4 hours from now -> T-1h countdown visible in UI (3h remaining)
-        db.add(
-            MockServiceNowChange(
-                chg_number="CHG0042115",
-                title="HQ WAN Router BGP Local-Pref & Failover Maintenance",
-                description=(
-                    "Planned BGP preference maintenance on HQ border router rtr-hq-wan01 "
-                    "and EdgeConnect hub uec-abc-prd01."
-                ),
-                scheduled_start=now + timedelta(hours=4),
-                scheduled_end=now + timedelta(hours=6),
-                engineer_name="Jordan Chen",
-                engineer_email="jordan.chen@netops.local",
-                state="scheduled",
-                ci_device_ids=[rtr_id, ec_id],
-            )
+        await repos.mock_servicenow.create(
+            chg_number="CHG0042115",
+            title="HQ WAN Router BGP Local-Pref & Failover Maintenance",
+            description=(
+                "Planned BGP preference maintenance on HQ border router rtr-hq-wan01 "
+                "and EdgeConnect hub uec-abc-prd01."
+            ),
+            scheduled_start=now + timedelta(hours=4),
+            scheduled_end=now + timedelta(hours=6),
+            engineer_name="Jordan Chen",
+            engineer_email="jordan.chen@netops.local",
+            state="scheduled",
+            ci_device_ids=[rtr_id, ec_id],
+            commit=False,
         )
 
-    db.commit()
+    await repos.commit()

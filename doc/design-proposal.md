@@ -29,10 +29,11 @@ flowchart LR
 ```
 
 ### Why This Solves Real-World Operational Challenges
-1. **Reliable `T - 1h` Scheduling**: Instead of fragile in-memory timers, `capture_scheduled_at = scheduled_start - 1h` is stored in PostgreSQL. If a ServiceNow ticket is **rescheduled** or **cancelled**, the next sync tick updates or cancels the job cleanly. Claiming due jobs via `SELECT ... FOR UPDATE SKIP LOCKED` prevents duplicate collection across multiple backend replicas.
-2. **Bounded Concurrency & Fault Isolation**: Multi-CI changes poll devices concurrently via `asyncio.Semaphore` with per-device timeouts (`asyncio.wait_for`) and `return_exceptions=True`. One unreachable router never blocks or aborts sibling devices.
-3. **True Multi-Core Pipeline Execution**: Both analytical pipelines accept and return pure, picklable dataclasses (zero DB/HTTP coupling) and fan out across a `ProcessPoolExecutor`, avoiding Python GIL contention on large routing tables.
-4. **Multi-Vendor Parity**: Transport (REST / NX-API / RESTCONF / Mock) is strictly separated from **production parsers** (`parse_edgeconnect_csv`, `parse_cisco_nxos_cli`, `parse_cisco_ios_cli`), normalizing all vendors into one canonical `NormalizedRoute` model.
+1. **Strict Async Route → Service → Repository Layering**: Every FastAPI route is `async def` and delegates strictly to Services, which delegate all persistence to Repositories (`RepositoryBundle`). Automated AST tests enforce zero SQLAlchemy usage in routes/services and 100% async route handlers.
+2. **Reliable `T - 1h` Scheduling**: Instead of fragile in-memory timers, `capture_scheduled_at = scheduled_start - 1h` is stored in PostgreSQL. If a ServiceNow ticket is **rescheduled** or **cancelled**, the next sync tick updates or cancels the job cleanly. Claiming due jobs via `SELECT ... FOR UPDATE SKIP LOCKED` prevents duplicate collection across multiple backend replicas.
+3. **Bounded Concurrency & Fault Isolation**: Multi-CI changes poll devices concurrently via `asyncio.Semaphore` with per-device timeouts (`asyncio.wait_for`) and `return_exceptions=True`. One unreachable router never blocks or aborts sibling devices.
+4. **True Multi-Core Pipeline Execution**: Both analytical pipelines accept and return pure, picklable dataclasses (zero DB/HTTP coupling) and fan out across a `ProcessPoolExecutor`, avoiding Python GIL contention on large routing tables.
+5. **Multi-Vendor Parity**: Transport (REST / NX-API / RESTCONF / Mock) is strictly separated from **production parsers** (`parse_edgeconnect_csv`, `parse_cisco_nxos_cli`, `parse_cisco_ios_cli`), normalizing all vendors into one canonical `NormalizedRoute` model.
 
 ---
 
@@ -136,5 +137,5 @@ Because every business condition is injected at execution time and every analyti
 ## 5. Verification Summary
 
 All core guarantees are backed by automated test suites (`uv run pytest` and `npm test`):
-- **Backend (27 `pytest` cases, `ruff` 0 errors)**: Covers EdgeConnect CSV/JSON, Cisco NX-OS & IOS-XE parsers, exact prefix & entry conservation on the provided 4,442-row CSVs, exact-match watchlist isolation, `covering_supernet_egress_unknown` safeguard, Feature 2 mini-example & 1,765-prefix summarization, `asyncio.Semaphore` concurrency + timeout fault isolation, real `ProcessPoolExecutor` parallel batches, `T - 1h` scheduler rescheduling/cancellation, HTML email + row-expanded CSV attachments, and full REST API integration.
+- **Backend (31 `pytest` cases, `ruff` 0 errors)**: Covers EdgeConnect CSV/JSON, Cisco NX-OS & IOS-XE parsers, exact prefix & entry conservation on the provided 4,442-row CSVs, exact-match watchlist isolation, `covering_supernet_egress_unknown` safeguard, Feature 2 mini-example & 1,765-prefix summarization, `asyncio.Semaphore` concurrency + timeout fault isolation, real `ProcessPoolExecutor` parallel batches, `T - 1h` scheduler rescheduling/cancellation, HTML email + row-expanded CSV attachments, Repository unit tests, AST layering & async-route enforcement, and full REST API integration.
 - **Frontend (7 `Vitest` + RTL cases, strict `tsc -b` build)**: Covers interactive filtering, `IMPORTANT` highlighting, row-expanded CSV export, Feature 2 device lookup & covered-subnet expansion, Important Routes CRUD, and ServiceNow Simulator flows.

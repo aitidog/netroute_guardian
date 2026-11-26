@@ -1,14 +1,11 @@
-"""Database-backed ServiceNow simulator provider for standalone demonstrations."""
+"""Repository-backed ServiceNow simulator provider for standalone demonstrations."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.adapters.servicenow.base import ServiceNowChangeDTO, ServiceNowProvider
-from app.models.entities import MockServiceNowChange
+from app.repositories.mock_snow_repo import MockServiceNowRepository
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -18,10 +15,10 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 
 class MockServiceNowProvider(ServiceNowProvider):
-    """Reads simulated Change Requests from the local ``mock_servicenow_changes`` table."""
+    """Reads simulated Change Requests via ``MockServiceNowRepository``."""
 
-    def __init__(self, db: Session) -> None:
-        self._db = db
+    def __init__(self, repo: MockServiceNowRepository) -> None:
+        self._repo = repo
 
     @property
     def source_name(self) -> str:
@@ -32,15 +29,14 @@ class MockServiceNowProvider(ServiceNowProvider):
         window_start: datetime,
         window_end: datetime,
     ) -> list[ServiceNowChangeDTO]:
-        stmt = select(MockServiceNowChange).order_by(MockServiceNowChange.scheduled_start.asc())
-        records = list(self._db.scalars(stmt).all())
+        records = await self._repo.list_all()
         results: list[ServiceNowChangeDTO] = []
         ws = _ensure_utc(window_start)
         we = _ensure_utc(window_end)
 
         for rec in records:
             start_utc = _ensure_utc(rec.scheduled_start)
-            # Include cancelled changes as well so already-synced platform jobs get cancelled.
+            # Include cancelled changes so already-synced platform jobs get cancelled.
             if rec.state == "cancelled" or (ws <= start_utc <= we):
                 results.append(
                     ServiceNowChangeDTO(
@@ -48,7 +44,7 @@ class MockServiceNowProvider(ServiceNowProvider):
                         title=rec.title,
                         description=rec.description,
                         scheduled_start=start_utc,
-                        scheduled_end=_ensure_utc(rec.scheduled_end) if rec.scheduled_end else None,
+                        scheduled_end=(_ensure_utc(rec.scheduled_end) if rec.scheduled_end else None),
                         engineer_name=rec.engineer_name,
                         engineer_email=rec.engineer_email,
                         state=rec.state,

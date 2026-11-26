@@ -1,12 +1,13 @@
-"""FastAPI application factory and lifecycle management."""
+"""FastAPI application factory, domain exception handlers, and lifecycle management."""
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
@@ -14,8 +15,16 @@ from app.api.v1.router import router as v1_router
 from app.core.concurrency import PipelineExecutor
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, engine, init_db
+from app.core.exceptions import ConflictError, DomainValidationError, ResourceNotFoundError
+from app.repositories.bundle import RepositoryBundle
 from app.scheduler.jobs import SchedulerManager
 from app.services.change_service import ChangeWorkflowService
+from app.services.resource_services import (
+    DeviceService,
+    ImportantRouteService,
+    SettingsService,
+    SimulatorService,
+)
 from app.services.seed import seed_initial_data
 from app.services.summary_service import RouteSummaryService
 
@@ -33,7 +42,7 @@ def create_app(
     session_factory: sessionmaker | None = None,
     seed_demo_data: bool = True,
 ) -> FastAPI:
-    """Create and configure the FastAPI application with injected dependencies."""
+    """Create and configure the FastAPI application with injected service dependencies."""
     active_settings = settings or get_settings()
     active_engine = db_engine or engine
     active_session_factory = session_factory or SessionLocal
@@ -50,6 +59,11 @@ def create_app(
         settings=active_settings,
         pipeline_executor=pipeline_executor,
     )
+    important_route_service = ImportantRouteService()
+    device_service = DeviceService()
+    simulator_service = SimulatorService(change_service=change_service)
+    settings_service = SettingsService(settings=active_settings)
+
     scheduler_manager = SchedulerManager(
         settings=active_settings,
         session_factory=active_session_factory,
@@ -61,9 +75,8 @@ def create_app(
         init_db(active_engine)
         if seed_demo_data:
             with active_session_factory() as db:
-                seed_initial_data(db, active_settings)
+                await seed_initial_data(RepositoryBundle(db), active_settings)
         pipeline_executor.start()
-        # Perform an initial sync & due dispatch on boot so demo changes appear immediately.
         if active_settings.scheduler_enabled:
             try:
                 await scheduler_manager.run_sync_tick()
@@ -87,7 +100,23 @@ def create_app(
     app.state.pipeline_executor = pipeline_executor
     app.state.change_service = change_service
     app.state.summary_service = summary_service
+    app.state.important_route_service = important_route_service
+    app.state.device_service = device_service
+    app.state.simulator_service = simulator_service
+    app.state.settings_service = settings_service
     app.state.scheduler_manager = scheduler_manager
+
+    @app.exception_handler(ResourceNotFoundError)
+    async def _not_found_handler(_request: Request, exc: ResourceNotFoundError) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ConflictError)
+    async def _conflict_handler(_request: Request, exc: ConflictError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(DomainValidationError)
+    async def _validation_handler(_request: Request, exc: DomainValidationError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     app.add_middleware(
         CORSMiddleware,
@@ -98,7 +127,7 @@ def create_app(
     )
 
     @app.get("/health", tags=["Health"])
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, str]:
         return {"status": "ok"}
 
     app.include_router(v1_router, prefix=active_settings.api_prefix)

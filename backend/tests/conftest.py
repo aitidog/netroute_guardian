@@ -1,7 +1,8 @@
-"""Shared pytest fixtures for backend unit, concurrency, and API integration tests."""
+"""Shared pytest fixtures for backend unit, concurrency, repository, and API tests."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import Settings
 from app.core.database import build_engine, get_db, init_db
 from app.main import create_app
+from app.repositories.bundle import RepositoryBundle
 from app.services.seed import seed_initial_data
 
 SAMPLE_DATA_DIR = Path(__file__).resolve().parents[1] / "sample_data"
@@ -41,7 +43,7 @@ def db_session_factory(test_settings: Settings):
     init_db(engine)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
     with factory() as db:
-        seed_initial_data(db, test_settings)
+        asyncio.run(seed_initial_data(RepositoryBundle(db), test_settings))
     yield engine, factory
     engine.dispose()
 

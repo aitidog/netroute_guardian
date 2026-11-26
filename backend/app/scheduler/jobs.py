@@ -11,13 +11,14 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import Settings
 from app.models.entities import utcnow
+from app.repositories.bundle import RepositoryBundle
 from app.services.change_service import ChangeWorkflowService
 
 logger = logging.getLogger(__name__)
 
 
 class SchedulerManager:
-    """Runs periodic ServiceNow polling and T-1h pre-change capture dispatch."""
+    """Runs periodic ServiceNow polling and T-1h pre-change capture dispatch via repositories."""
 
     def __init__(
         self,
@@ -76,20 +77,23 @@ class SchedulerManager:
     async def run_sync_tick(self) -> int:
         """Single ServiceNow sync cycle (also directly callable from tests)."""
         with self.session_factory() as db:
-            synced = await self.change_service.sync_from_servicenow(db)
+            repos = RepositoryBundle(db)
+            synced = await self.change_service.sync_from_servicenow(repos)
             self.last_sync_at = utcnow()
             return len(synced)
 
     async def run_dispatch_tick(self) -> list[int]:
         """Claim due T-1h changes with FOR UPDATE SKIP LOCKED and execute pre-change captures."""
         with self.session_factory() as db:
-            due_ids = self.change_service.claim_due_pre_capture_ids(db)
+            repos = RepositoryBundle(db)
+            due_ids = await self.change_service.claim_due_pre_capture_ids(repos)
 
         processed: list[int] = []
         for chg_id in due_ids:
             try:
                 with self.session_factory() as db:
-                    await self.change_service.capture_pre_change(db, chg_id)
+                    repos = RepositoryBundle(db)
+                    await self.change_service.capture_pre_change(repos, chg_id)
                 processed.append(chg_id)
             except Exception as exc:
                 logger.exception("Scheduled pre-capture failed for change_id=%d: %s", chg_id, exc)

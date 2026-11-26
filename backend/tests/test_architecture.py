@@ -7,7 +7,9 @@ import inspect
 from pathlib import Path
 
 from fastapi.routing import APIRoute
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.database import AsyncSessionLocal, engine
 from app.main import app
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "app"
@@ -52,3 +54,20 @@ def test_all_api_route_handlers_are_async():
                 non_async_routes.append(f"{sorted(route.methods)} {route.path} -> {route.name}")
 
     assert non_async_routes == [], f"Non-async API routes detected: {non_async_routes}"
+
+
+def test_database_and_repositories_are_fully_async():
+    """Verify database engine uses AsyncEngine and repositories never import sync Session."""
+    assert isinstance(engine, AsyncEngine)
+    assert AsyncSessionLocal is not None
+
+    repo_dir = APP_ROOT / "repositories"
+    violations: list[str] = []
+    for py_file in sorted(repo_dir.rglob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "sqlalchemy.orm":
+                imported = {alias.name for alias in node.names}
+                if "Session" in imported or "sessionmaker" in imported:
+                    violations.append(f"{py_file.name} imports sync Session from sqlalchemy.orm")
+    assert violations == [], f"Sync Session imports found in repositories: {violations}"

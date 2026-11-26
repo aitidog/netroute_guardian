@@ -1,11 +1,11 @@
-"""Scoped Unit-of-Work bundle exposing all domain repositories over one DB session."""
+"""Scoped async Unit-of-Work bundle exposing all domain repositories over one AsyncSession."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
 from fastapi import Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.change_repo import ChangeRequestRepository
@@ -18,9 +18,9 @@ from app.repositories.snapshot_repo import SnapshotRepository
 
 
 class RepositoryBundle:
-    """Groups all domain repositories under one transactional database session."""
+    """Groups all async domain repositories under one transactional AsyncSession."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self.devices = DeviceRepository(db)
         self.important_routes = ImportantRouteRepository(db)
@@ -31,12 +31,14 @@ class RepositoryBundle:
         self.reports = ReportRepository(db)
 
     async def commit(self) -> None:
-        self._db.commit()
+        await self._db.commit()
 
     async def rollback(self) -> None:
-        self._db.rollback()
+        await self._db.rollback()
 
 
-async def get_repositories(db: Session = Depends(get_db)) -> AsyncGenerator[RepositoryBundle, None]:
-    """FastAPI dependency providing a request-scoped RepositoryBundle (no raw DB in routes)."""
+async def get_repositories(
+    db: AsyncSession = Depends(get_db),
+) -> AsyncGenerator[RepositoryBundle, None]:
+    """FastAPI async dependency providing a request-scoped RepositoryBundle."""
     yield RepositoryBundle(db)

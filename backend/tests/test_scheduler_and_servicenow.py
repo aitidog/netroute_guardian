@@ -32,9 +32,9 @@ async def test_servicenow_sync_reschedule_and_due_dispatch(
     synced_count = await scheduler.run_sync_tick()
     assert synced_count == 2
 
-    with factory() as db:
-        chg_due = db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042108"))
-        chg_future = db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042115"))
+    async with factory() as db:
+        chg_due = await db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042108"))
+        chg_future = await db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042115"))
         assert chg_due is not None and chg_due.status == "synced"
         assert chg_future is not None and chg_future.status == "synced"
 
@@ -43,27 +43,27 @@ async def test_servicenow_sync_reschedule_and_due_dispatch(
     processed = await scheduler.run_dispatch_tick()
     assert len(processed) == 1
 
-    with factory() as db:
-        chg_due = db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042108"))
-        chg_future = db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042115"))
+    async with factory() as db:
+        chg_due = await db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042108"))
+        chg_future = await db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0042115"))
         assert chg_due.status == "pre_captured"
         assert chg_future.status == "synced"
 
-    # 3. Reschedule CHG0042115 in simulated ServiceNow to 30m from now -> sync updates capture_scheduled_at
-    with factory() as db:
-        snow_future = db.scalar(
+    # 3. Reschedule CHG0042115 in simulated ServiceNow to 30m from now -> sync updates capture time
+    async with factory() as db:
+        snow_future = await db.scalar(
             select(MockServiceNowChange).where(MockServiceNowChange.chg_number == "CHG0042115")
         )
         snow_future.scheduled_start = datetime.now(UTC) + timedelta(minutes=30)
-        db.commit()
+        await db.commit()
 
     await scheduler.run_sync_tick()
     processed_second = await scheduler.run_dispatch_tick()
     assert len(processed_second) == 1
 
     # 4. Create a new change and then cancel it in ServiceNow -> status transitions to cancelled
-    with factory() as db:
-        dev = db.scalar(select(Device).limit(1))
+    async with factory() as db:
+        dev = await db.scalar(select(Device).limit(1))
         snow_cancel = MockServiceNowChange(
             chg_number="CHG0099999",
             title="Temporary Change To Cancel",
@@ -74,18 +74,18 @@ async def test_servicenow_sync_reschedule_and_due_dispatch(
             ci_device_ids=[dev.id],
         )
         db.add(snow_cancel)
-        db.commit()
+        await db.commit()
 
     await scheduler.run_sync_tick()
-    with factory() as db:
-        snow_cancel = db.scalar(
+    async with factory() as db:
+        snow_cancel = await db.scalar(
             select(MockServiceNowChange).where(MockServiceNowChange.chg_number == "CHG0099999")
         )
         snow_cancel.state = "cancelled"
-        db.commit()
+        await db.commit()
 
     await scheduler.run_sync_tick()
-    with factory() as db:
-        synced_cancel = db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0099999"))
+    async with factory() as db:
+        synced_cancel = await db.scalar(select(ChangeRequest).where(ChangeRequest.chg_number == "CHG0099999"))
         assert synced_cancel is not None
         assert synced_cancel.status == "cancelled"

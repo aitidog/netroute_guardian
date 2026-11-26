@@ -1,20 +1,20 @@
-"""Repository for persisted runtime key-value AppSetting records."""
+"""Async repository for persisted runtime key-value AppSetting records."""
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import AppSetting
 
 
 class SettingsRepository:
-    """Encapsulates all database access for ``app_settings``."""
+    """Encapsulates all async database access for ``app_settings``."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def get_int(self, key: str, default: int) -> int:
-        rec = self._db.get(AppSetting, key)
+        rec = await self._db.get(AppSetting, key)
         if rec is None:
             return default
         try:
@@ -29,14 +29,14 @@ class SettingsRepository:
         value: str,
         description: str = "",
     ) -> None:
-        if self._db.get(AppSetting, key) is None:
+        if await self._db.get(AppSetting, key) is None:
             self._db.add(AppSetting(key=key, value=value, description=description))
 
     async def upsert_many(self, updates: dict[str, str]) -> None:
         for key, value in updates.items():
-            rec = self._db.get(AppSetting, key)
+            rec = await self._db.get(AppSetting, key)
             if rec is None:
                 self._db.add(AppSetting(key=key, value=value))
             else:
                 rec.value = value
-        self._db.commit()
+        await self._db.commit()

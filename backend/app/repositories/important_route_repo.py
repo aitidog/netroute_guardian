@@ -1,34 +1,34 @@
-"""Repository for user-managed pre-specified ImportantRoute entries."""
+"""Async repository for user-managed pre-specified ImportantRoute entries."""
 
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.entities import ImportantRoute
 
 
 class ImportantRouteRepository:
-    """Encapsulates all database access for ``important_routes``."""
+    """Encapsulates all async database access for ``important_routes``."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def list_all(self) -> list[ImportantRoute]:
-        return list(self._db.scalars(select(ImportantRoute).order_by(ImportantRoute.created_at.asc())).all())
+        result = await self._db.scalars(select(ImportantRoute).order_by(ImportantRoute.created_at.asc()))
+        return list(result.all())
 
     async def list_enabled_prefixes(self) -> list[str]:
-        return list(
-            self._db.scalars(select(ImportantRoute.prefix).where(ImportantRoute.enabled.is_(True))).all()
-        )
+        result = await self._db.scalars(select(ImportantRoute.prefix).where(ImportantRoute.enabled.is_(True)))
+        return list(result.all())
 
     async def get_by_id(self, route_id: int) -> ImportantRoute | None:
-        return self._db.get(ImportantRoute, route_id)
+        return await self._db.get(ImportantRoute, route_id)
 
     async def get_by_prefix(self, prefix: str) -> ImportantRoute | None:
-        return self._db.scalar(select(ImportantRoute).where(ImportantRoute.prefix == prefix))
+        return await self._db.scalar(select(ImportantRoute).where(ImportantRoute.prefix == prefix))
 
     async def create(
         self,
@@ -42,12 +42,12 @@ class ImportantRouteRepository:
         self._db.add(rec)
         try:
             if commit:
-                self._db.commit()
-                self._db.refresh(rec)
+                await self._db.commit()
+                await self._db.refresh(rec)
             else:
-                self._db.flush()
+                await self._db.flush()
         except IntegrityError as exc:
-            self._db.rollback()
+            await self._db.rollback()
             raise ConflictError(f"Important route '{prefix}' already exists") from exc
         return rec
 
@@ -59,7 +59,7 @@ class ImportantRouteRepository:
         description: str | None = None,
         enabled: bool | None = None,
     ) -> ImportantRoute:
-        rec = self._db.get(ImportantRoute, route_id)
+        rec = await self._db.get(ImportantRoute, route_id)
         if rec is None:
             raise ResourceNotFoundError("Important route not found")
 
@@ -71,16 +71,16 @@ class ImportantRouteRepository:
             rec.enabled = enabled
 
         try:
-            self._db.commit()
+            await self._db.commit()
         except IntegrityError as exc:
-            self._db.rollback()
+            await self._db.rollback()
             raise ConflictError(f"Important route '{prefix}' already exists") from exc
-        self._db.refresh(rec)
+        await self._db.refresh(rec)
         return rec
 
     async def delete(self, route_id: int) -> None:
-        rec = self._db.get(ImportantRoute, route_id)
+        rec = await self._db.get(ImportantRoute, route_id)
         if rec is None:
             raise ResourceNotFoundError("Important route not found")
-        self._db.delete(rec)
-        self._db.commit()
+        await self._db.delete(rec)
+        await self._db.commit()

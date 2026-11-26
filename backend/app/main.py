@@ -1,4 +1,4 @@
-"""FastAPI application factory, domain exception handlers, and lifecycle management."""
+"""FastAPI application factory, domain exception handlers, and async lifecycle management."""
 
 from __future__ import annotations
 
@@ -8,13 +8,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.api.v1.router import router as v1_router
 from app.core.concurrency import PipelineExecutor
 from app.core.config import Settings, get_settings
-from app.core.database import SessionLocal, engine, init_db
+from app.core.database import AsyncSessionLocal, engine, init_db
 from app.core.exceptions import ConflictError, DomainValidationError, ResourceNotFoundError
 from app.repositories.bundle import RepositoryBundle
 from app.scheduler.jobs import SchedulerManager
@@ -38,14 +37,14 @@ logger = logging.getLogger(__name__)
 def create_app(
     *,
     settings: Settings | None = None,
-    db_engine: Engine | None = None,
-    session_factory: sessionmaker | None = None,
+    db_engine: AsyncEngine | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
     seed_demo_data: bool = True,
 ) -> FastAPI:
-    """Create and configure the FastAPI application with injected service dependencies."""
+    """Create and configure the FastAPI application with injected async dependencies."""
     active_settings = settings or get_settings()
     active_engine = db_engine or engine
-    active_session_factory = session_factory or SessionLocal
+    active_session_factory = session_factory or AsyncSessionLocal
 
     pipeline_executor = PipelineExecutor(
         mode=active_settings.pipeline_executor_mode,
@@ -72,9 +71,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        init_db(active_engine)
+        await init_db(active_engine)
         if seed_demo_data:
-            with active_session_factory() as db:
+            async with active_session_factory() as db:
                 await seed_initial_data(RepositoryBundle(db), active_settings)
         pipeline_executor.start()
         if active_settings.scheduler_enabled:
@@ -89,6 +88,7 @@ def create_app(
         finally:
             scheduler_manager.shutdown()
             pipeline_executor.shutdown()
+            await active_engine.dispose()
 
     app = FastAPI(
         title=active_settings.app_name,

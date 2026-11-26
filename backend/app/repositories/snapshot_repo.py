@@ -1,17 +1,17 @@
-"""Repository for point-in-time RouteSnapshot persistence."""
+"""Async repository for point-in-time RouteSnapshot persistence."""
 
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import RouteSnapshot
 
 
 class SnapshotRepository:
-    """Encapsulates all database access for ``route_snapshots``."""
+    """Encapsulates all async database access for ``route_snapshots``."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def create(
@@ -39,10 +39,10 @@ class SnapshotRepository:
         )
         self._db.add(snap)
         if commit:
-            self._db.commit()
-            self._db.refresh(snap)
+            await self._db.commit()
+            await self._db.refresh(snap)
         else:
-            self._db.flush()
+            await self._db.flush()
         return snap
 
     async def get_latest_by_device_for_change(
@@ -50,13 +50,13 @@ class SnapshotRepository:
         change_id: int,
         phase: str,
     ) -> dict[int, RouteSnapshot]:
-        rows = self._db.scalars(
+        result = await self._db.scalars(
             select(RouteSnapshot)
             .where(RouteSnapshot.change_id == change_id, RouteSnapshot.phase == phase)
             .order_by(RouteSnapshot.captured_at.desc())
-        ).all()
+        )
         by_device: dict[int, RouteSnapshot] = {}
-        for snap in rows:
+        for snap in result.all():
             if snap.device_id is not None and snap.device_id not in by_device:
                 by_device[snap.device_id] = snap
         return by_device

@@ -1,4 +1,4 @@
-"""Repository for simulated external ServiceNow change tickets."""
+"""Async repository for simulated external ServiceNow change tickets."""
 
 from __future__ import annotations
 
@@ -7,27 +7,28 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.entities import MockServiceNowChange
 
 
 class MockServiceNowRepository:
-    """Encapsulates all database access for ``mock_servicenow_changes``."""
+    """Encapsulates all async database access for ``mock_servicenow_changes``."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def list_all(self) -> list[MockServiceNowChange]:
         stmt = select(MockServiceNowChange).order_by(MockServiceNowChange.scheduled_start.asc())
-        return list(self._db.scalars(stmt).all())
+        result = await self._db.scalars(stmt)
+        return list(result.all())
 
     async def has_any(self) -> bool:
-        return self._db.scalar(select(MockServiceNowChange.id).limit(1)) is not None
+        return await self._db.scalar(select(MockServiceNowChange.id).limit(1)) is not None
 
     async def get_by_id(self, record_id: int) -> MockServiceNowChange | None:
-        return self._db.get(MockServiceNowChange, record_id)
+        return await self._db.get(MockServiceNowChange, record_id)
 
     async def create(
         self,
@@ -57,21 +58,21 @@ class MockServiceNowRepository:
         self._db.add(rec)
         try:
             if commit:
-                self._db.commit()
-                self._db.refresh(rec)
+                await self._db.commit()
+                await self._db.refresh(rec)
             else:
-                self._db.flush()
+                await self._db.flush()
         except IntegrityError as exc:
-            self._db.rollback()
+            await self._db.rollback()
             raise ConflictError(f"ServiceNow change '{chg_number}' already exists") from exc
         return rec
 
     async def update(self, record_id: int, fields: dict[str, Any]) -> MockServiceNowChange:
-        rec = self._db.get(MockServiceNowChange, record_id)
+        rec = await self._db.get(MockServiceNowChange, record_id)
         if rec is None:
             raise ResourceNotFoundError("Simulated ServiceNow change not found")
         for key, value in fields.items():
             setattr(rec, key, value)
-        self._db.commit()
-        self._db.refresh(rec)
+        await self._db.commit()
+        await self._db.refresh(rec)
         return rec

@@ -1,4 +1,4 @@
-"""DB-driven APScheduler manager for ServiceNow sync and T-1h automatic pre-capture."""
+"""Async DB-driven APScheduler manager for ServiceNow sync and T-1h automatic pre-capture."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.models.entities import utcnow
@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 class SchedulerManager:
-    """Runs periodic ServiceNow polling and T-1h pre-change capture dispatch via repositories."""
+    """Runs periodic ServiceNow polling and T-1h pre-change capture dispatch via AsyncSession."""
 
     def __init__(
         self,
         *,
         settings: Settings,
-        session_factory: sessionmaker,
+        session_factory: async_sessionmaker[AsyncSession],
         change_service: ChangeWorkflowService,
     ) -> None:
         self.settings = settings
@@ -76,7 +76,7 @@ class SchedulerManager:
 
     async def run_sync_tick(self) -> int:
         """Single ServiceNow sync cycle (also directly callable from tests)."""
-        with self.session_factory() as db:
+        async with self.session_factory() as db:
             repos = RepositoryBundle(db)
             synced = await self.change_service.sync_from_servicenow(repos)
             self.last_sync_at = utcnow()
@@ -84,14 +84,14 @@ class SchedulerManager:
 
     async def run_dispatch_tick(self) -> list[int]:
         """Claim due T-1h changes with FOR UPDATE SKIP LOCKED and execute pre-change captures."""
-        with self.session_factory() as db:
+        async with self.session_factory() as db:
             repos = RepositoryBundle(db)
             due_ids = await self.change_service.claim_due_pre_capture_ids(repos)
 
         processed: list[int] = []
         for chg_id in due_ids:
             try:
-                with self.session_factory() as db:
+                async with self.session_factory() as db:
                     repos = RepositoryBundle(db)
                     await self.change_service.capture_pre_change(repos, chg_id)
                 processed.append(chg_id)

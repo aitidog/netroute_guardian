@@ -1,27 +1,28 @@
-"""Repository for persisted ComparisonReport entities."""
+"""Async repository for persisted ComparisonReport entities."""
 
 from __future__ import annotations
 
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import ComparisonReport
 
 
 class ReportRepository:
-    """Encapsulates all database access for ``comparison_reports``."""
+    """Encapsulates all async database access for ``comparison_reports``."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
     async def list_recent(self, limit: int = 50) -> list[ComparisonReport]:
         stmt = select(ComparisonReport).order_by(ComparisonReport.created_at.desc()).limit(limit)
-        return list(self._db.scalars(stmt).all())
+        result = await self._db.scalars(stmt)
+        return list(result.all())
 
     async def get_by_id(self, report_id: int) -> ComparisonReport | None:
-        return self._db.get(ComparisonReport, report_id)
+        return await self._db.get(ComparisonReport, report_id)
 
     async def create(
         self,
@@ -52,10 +53,10 @@ class ReportRepository:
         )
         self._db.add(report)
         if commit:
-            self._db.commit()
-            self._db.refresh(report)
+            await self._db.commit()
+            await self._db.refresh(report)
         else:
-            self._db.flush()
+            await self._db.flush()
         return report
 
     async def update_email_delivery(
@@ -76,4 +77,4 @@ class ReportRepository:
             if sent_at is not None:
                 rep.email_sent_at = sent_at
         if commit:
-            self._db.commit()
+            await self._db.commit()

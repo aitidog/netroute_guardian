@@ -1,11 +1,17 @@
-"""Database engine, session factory, and declarative base."""
+"""Async SQLAlchemy 2.0 engine, session factory, and declarative base."""
 
-from collections.abc import Generator
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
 from typing import Any
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
@@ -15,37 +21,51 @@ class Base(DeclarativeBase):
     """Base class for all SQLAlchemy ORM models."""
 
 
-def build_engine(database_url: str) -> Engine:
-    """Create a SQLAlchemy engine tuned for either PostgreSQL or in-memory SQLite."""
-    kwargs: dict[str, Any] = {"future": True}
-    if database_url.startswith("sqlite"):
+def normalize_async_database_url(database_url: str) -> str:
+    """Ensure SQLite and PostgreSQL URLs use async-compatible SQLAlchemy drivers."""
+    if database_url.startswith("sqlite:///"):
+        return database_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
+def build_async_engine(database_url: str) -> AsyncEngine:
+    """Create an AsyncEngine tuned for PostgreSQL (psycopg3 async) or SQLite (aiosqlite)."""
+    async_url = normalize_async_database_url(database_url)
+    kwargs: dict[str, Any] = {}
+    if async_url.startswith("sqlite+aiosqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
-        if ":memory:" in database_url:
+        if ":memory:" in async_url:
             kwargs["poolclass"] = StaticPool
     else:
         kwargs["pool_pre_ping"] = True
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20
-    return create_engine(database_url, **kwargs)
+    return create_async_engine(async_url, **kwargs)
 
 
 _settings = get_settings()
-engine = build_engine(_settings.database_url)
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+engine: AsyncEngine = build_async_engine(_settings.database_url)
+AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+)
 
 
-def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency yielding a scoped database session."""
-    db = SessionLocal()
-    try:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI async dependency yielding a request-scoped AsyncSession."""
+    async with AsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
 
 
-def init_db(target_engine: Engine | None = None) -> None:
-    """Create all database tables if they do not exist."""
-    # Import models so metadata is fully registered before create_all.
+async def init_db(target_engine: AsyncEngine | None = None) -> None:
+    """Create all database tables asynchronously if they do not exist."""
     import app.models.entities  # noqa: F401
 
-    Base.metadata.create_all(bind=target_engine or engine)
+    active = target_engine or engine
+    async with active.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

@@ -44,9 +44,9 @@ flowchart TD
     R2 -.-> S3
 
     subgraph Analyzers["Pluggable Analyzers (Stage 4)"]
-        A1["LpmFallbackAnalyzer<br/>Post-change Parent & Egress Check"]
-        A2["PathSelectionAnalyzer<br/>(AD, Metric, PP) Primary vs Backup"]
-        A3["ImpactAssessmentAnalyzer<br/>Affected IPs & Risk Classification"]
+        A1["LpmFallbackAnalyzer<br/>Candidate Covering Supernet & Egress Check"]
+        A2["PathSelectionAnalyzer<br/>Recorded (AD, Metric, PP) & Next-Hop Deltas"]
+        A3["ImpactAssessmentAnalyzer<br/>Affected IPs & Internal Risk Metadata"]
     end
     A1 -.-> S4
     A2 -.-> S4
@@ -120,9 +120,10 @@ flowchart TD
 | `added` | `prefix_len > 20` | **`INFO`** |
 
 - Overall report `risk_level` is the maximum severity across all diff entries (or `PASS` if zero differences exist).
+- **Presentation Separation**: `severity` and `risk_level` remain populated internally in the pipeline payload for deterministic ordering and programmatic consumers, while the **Web UI (`ReportViewer.tsx`), HTML email template (`comparison_report.html`), and 19-column CSV export (`csv_exporter.py`) intentionally omit `Severity` display/columns** in favor of prominent `IMPORTANT` row highlighting and color-coded route-entry diffs (`[-]` red removed, `[+]` green added, `[=]` muted unchanged).
 
 #### Stage 5: `ReportAssemblyStage` ([stages.py](../backend/app/pipelines/comparison/stages.py))
-- **Single Responsibility**: Synthesize human-readable explanations, sort entries deterministically, build `summary_stats` & `executive_summary`, and output `report_payload` consumed identically by the React UI and Jinja2 HTML email renderer.
+- **Single Responsibility**: Synthesize human-readable explanations, sort entries deterministically, compute both prefix-level and entry-level counts (`removed_prefix_entries_count`, `added_prefix_entries_count`, `changed_removed_entries_count`, `changed_added_entries_count`, `net_entry_delta`), build `summary_stats` & `executive_summary`, and emit `report_payload` consumed uniformly by the React UI, Jinja2 HTML email renderer, and row-expanded CSV exporter (`Appliance, Subnet/Mask, Next Hop, Interface, Metric, ..., VRF, Protocol`).
 
 > Performance Note: On the 4,442-row reference EdgeConnect dataset, the entire 5-stage pipeline executes in **< 15 ms** per device. If a fleet ever processes full Internet DFZ tables, `LpmFallbackAnalyzer`'s internal prefix index can be swapped to a Radix Trie without changing its interface or any other stage.
 
@@ -196,7 +197,7 @@ Input (after `FilterNormalizeStage` drops `0.0.0.0/0`):
 
 ## 4. Runtime Configurability & Editable Conditions
 
-A core design requirement is that operational conditions must be **editable at runtime** without redeploying code or restarting worker pools. Because pipelines are stateless functions parameterized by `ComparisonInput` and `SummaryInput`, every invocation reads the latest configuration from PostgreSQL immediately before dispatching to `PipelineExecutor`.
+A core design requirement is that operational conditions must be **editable at runtime** without redeploying code or restarting worker pools. Because pipelines are stateless functions parameterized by `ComparisonInput` and `SummaryInput`, every invocation reads the latest configuration asynchronously from PostgreSQL via the Repository layer (`AsyncSession`) immediately before dispatching to `PipelineExecutor`.
 
 ### 4.1 Currently Editable Conditions
 

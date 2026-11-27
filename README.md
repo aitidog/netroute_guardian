@@ -3,6 +3,7 @@
 A full-stack web application designed to automate pre/post-change routing table verification with ServiceNow integration (**Feature 1**) and perform optimal prefix summarization across multi-vendor network devices (**Feature 2**).
 
 > **Documentation**:
+> - [Solution Design Proposal (Concise Overview)](doc/design-proposal.md)
 > - [System Architecture & Deployment Design](doc/architecture.md)
 > - [Pipeline Design, Algorithms, Extensibility & Configurable Conditions](doc/pipeline-design.md)
 
@@ -10,14 +11,14 @@ A full-stack web application designed to automate pre/post-change routing table 
 
 ## Architecture Overview
 
-- **Frontend**: React 18 + Vite + TypeScript + Tailwind CSS (served by Nginx in Docker Compose, proxying `/api`)
-- **Backend**: Python 3.12 + FastAPI + SQLAlchemy 2.0 + APScheduler, managed with **`uv`**
+- **Frontend**: React 18 + Vite 6 + TypeScript + Tailwind CSS (served by Nginx in Docker Compose, proxying `/api`), featuring `IMPORTANT` route highlighting, color-coded route-entry diffs (red removed / green added / muted unchanged), multi-criteria filtering, and one-click row-expanded CSV export
+- **Backend**: Python 3.12 + FastAPI (100% `async` routes) + native SQLAlchemy 2.0 **`AsyncEngine` / `AsyncSession`** (`psycopg` async / `aiosqlite`) + APScheduler, managed with **`uv`**, enforcing strict **Async Route → Service → Repository** layering
 - **Database**: PostgreSQL 16 (relational workflow & rule tables + JSONB route snapshots and reports)
-- **Email Delivery**: Async SMTP (`aiosmtplib`) + Jinja2 HTML report templates, paired with **Mailpit** in Docker Compose so delivered emails can be inspected live at `http://localhost:8025`
+- **Email Delivery**: Async SMTP (`aiosmtplib`) + Jinja2 HTML report templates + row-expanded RFC 4180 CSV attachment (`csv_exporter.py`), paired with **Mailpit** in Docker Compose so delivered emails can be inspected live at `http://localhost:8025`
 - **Concurrency Model**:
   - **Device Collection (I/O-bound)**: `ConcurrentDeviceCollector` uses bounded `asyncio.Semaphore` + per-device timeout + partial-failure isolation across all CIs in a Change Request, offloading blocking I/O and parsing to worker threads.
   - **Comparison & Summarization Pipelines (CPU-bound)**: Pure, picklable single-responsibility pipelines offloaded via `PipelineExecutor` (`ProcessPoolExecutor`) to utilize multiple CPU cores without blocking the FastAPI event loop.
-  - **Scheduler Concurrency Safety**: PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` guarantees idempotent `T - 1h` pre-capture job claiming across replicas.
+  - **Scheduler Concurrency Safety**: Async PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` guarantees idempotent `T - 1h` pre-capture job claiming across replicas.
 
 ---
 
@@ -25,13 +26,13 @@ A full-stack web application designed to automate pre/post-change routing table 
 
 ### Feature 1 — Comparison Pipeline (`backend/app/pipelines/comparison/`)
 1. **`NormalizeStage`**: Canonicalize CIDRs and aggregate multi-path entries by `(VRF, Prefix)`.
-2. **`DiffStage`**: Objective set/multiset diff producing `removed`, `added`, `changed`, and exact path deltas.
+2. **`DiffStage`**: Objective set/multiset (`Counter`) diff producing `removed`, `added`, `changed`, and exact path deltas.
 3. **`ImportanceClassifierStage`**: Pluggable rules — `LargePrefixRule` (`mask <= /20` removed/changed) and `PreSpecifiedRouteRule` (exact match against user-managed watchlist).
-4. **`NetworkAnalysisStage`**: Pluggable analyzers:
-   - `LpmFallbackAnalyzer`: Checks active post-change LPM parent coverage and egress consistency for removed prefixes.
-   - `PathSelectionAnalyzer`: Lexicographic `(AD, Metric, PeerPriority)` primary vs. backup path change detection, next-hop drift, redundancy deltas, and SD-WAN policy routing advisories.
-   - `ImpactAssessmentAnalyzer`: Affected IP space and risk rating (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW` / `PASS`).
-5. **`ReportAssemblyStage`**: Executive summary, prioritized sections, human-readable explanations, and stage timing telemetry.
+4. **`NetworkAnalysisStage`**: Pluggable evidence-based analyzers (no speculative live-forwarding claims):
+   - `LpmFallbackAnalyzer`: Checks post-change candidate covering supernets and observable recorded egress (explicitly flagging blank SD-WAN CSV egress as `covering_supernet_egress_unknown`).
+   - `PathSelectionAnalyzer`: Compares lowest recorded `(AD, Metric, PeerPriority)` tiers, entry-count deltas, and per-interface recorded next-hop changes.
+   - `ImpactAssessmentAnalyzer`: Computes affected IP space and internal risk metadata used for deterministic sorting (subjective `Severity` labels are omitted from the Web UI, HTML email, and CSV export in favor of `IMPORTANT` highlighting).
+5. **`ReportAssemblyStage`**: Executive summary, prefix + entry-level deltas, prioritized `IMPORTANT` / normal sections, human-readable explanations, and stage timing telemetry.
 
 ### Feature 2 — Route Summary Pipeline (`backend/app/pipelines/summary/`)
 1. **`FilterNormalizeStage`**: Excludes `0.0.0.0/0` (and `::/0`), canonicalizes CIDRs, deduplicates per VRF.

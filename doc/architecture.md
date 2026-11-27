@@ -7,7 +7,7 @@
 1. **Feature 1 — ServiceNow-Integrated Routing Table Comparison & Analysis**:
    - Automatically synchronizes scheduled network Change Requests from ServiceNow within a configurable lookahead window.
    - Schedules and executes pre-change routing table collection **1 hour before** (`T - 1h`) the planned change start time across all associated network Configuration Items (CIs).
-   - Provides an engineer-triggered post-change action that collects post-change routing tables from the exact same devices, executes a multi-stage comparison and network semantic analysis pipeline, and delivers a prioritized HTML comparison report to the executing engineer's mailbox.
+   - Provides an engineer-triggered post-change action that collects post-change routing tables from the exact same devices, executes a multi-stage comparison and evidence-based network analysis pipeline, and delivers a highlighted HTML comparison report with a row-expanded CSV attachment to the executing engineer's mailbox.
 2. **Feature 2 — Multi-Vendor Route Summarization**:
    - Accepts a device hostname or IP address (Silver Peak / Aruba EdgeConnect, Cisco Nexus, or Cisco IOS/IOS-XE Router) or an uploaded routing table.
    - Excludes the default route (`0.0.0.0/0`), identifies existing summary routes covering more-specific prefixes, and separates them from remaining unsummarizable routes.
@@ -16,6 +16,7 @@
 
 | Principle | Implementation Strategy |
 | :--- | :--- |
+| **Strict Async 3-Layer Separation** | Directional **Async Route → Service → Repository** architecture backed by native SQLAlchemy 2.0 `AsyncEngine` / `AsyncSession` (`psycopg` async / `aiosqlite`). Automated tests in `backend/tests/test_architecture.py` enforce zero SQLAlchemy usage in routes/services, 100% `async def` API handlers, and zero synchronous `Session` usage. |
 | **Pluggable External Adapters** | Abstract `ServiceNowProvider` and `DeviceCollector` interfaces decouple business workflows from external vendors. Production adapters and built-in demo simulators share the same parsers and downstream services. |
 | **Single-Responsibility Pipelines** | Both comparison analysis and route summarization are decomposed into pure, composable `PipelineStage` units operating on typed context objects—easy to test, explain, and extend without modifying existing stages. |
 | **Concurrency-First Execution** | I/O-bound device polling is bounded by `asyncio.Semaphore` with per-device timeouts and partial-failure isolation; CPU-bound prefix analysis runs in a `ProcessPoolExecutor` worker pool off the FastAPI event loop. |
@@ -29,18 +30,19 @@
 ```mermaid
 flowchart LR
     User["Network Engineer (Browser)"] -->|"HTTP :3000"| Nginx["Frontend Container<br/>(Nginx + React/Vite/TS)"]
-    Nginx -->|"/api/* Reverse Proxy"| API["Backend Container<br/>(FastAPI + Uvicorn :8000)"]
+    Nginx -->|"/api/* Reverse Proxy"| API["Backend Container<br/>(Async FastAPI + Uvicorn :8000)"]
 
     subgraph BackendRuntime["Backend Runtime (Python 3.12 / uv)"]
-        API --> Services["Service Layer<br/>(ChangeWorkflow & RouteSummary)"]
+        API --> Services["Service Layer<br/>(ChangeWorkflow, RouteSummary, ResourceServices)"]
         Scheduler["APScheduler<br/>(Sync & T-1h Dispatch)"] --> Services
+        Services --> Repos["Repository Layer<br/>(RepositoryBundle / AsyncSession)"]
         Services --> DevicePool["ConcurrentDeviceCollector<br/>(asyncio.Semaphore + Timeout)"]
         Services --> CpuPool["PipelineExecutor<br/>(ProcessPoolExecutor Workers)"]
-        Services --> Mailer["EmailReportSender<br/>(Jinja2 + aiosmtplib)"]
+        Services --> Mailer["EmailReportSender<br/>(Jinja2 + CSV + aiosmtplib)"]
     end
 
-    Services -->|"SQLAlchemy 2.0"| PG[("PostgreSQL 16<br/>Relational + JSONB")]
-    Scheduler -->|"FOR UPDATE SKIP LOCKED"| PG
+    Repos -->|"SQLAlchemy 2.0 AsyncEngine<br/>(psycopg async)"| PG[("PostgreSQL 16<br/>Relational + JSONB")]
+    Scheduler -->|"Async FOR UPDATE SKIP LOCKED"| Repos
     Mailer -->|"SMTP :1025"| Mailpit["Mailpit / Enterprise SMTP<br/>(Web Inbox :8025)"]
     Services -->|"Table API / Mock Store"| SNOW["ServiceNow Platform<br/>(Live or Built-in Simulator)"]
     DevicePool -->|"Orchestrator REST / CSV"| EC["Aruba EdgeConnect<br/>(Silver Peak SD-WAN)"]
@@ -61,25 +63,25 @@ flowchart LR
 
 ## 3. Backend Layered Architecture
 
-The backend (`backend/app/`) enforces strict directional **Async Route → Service → Repository** separation (verified automatically via AST tests in `backend/tests/test_architecture.py` so neither routes nor services can import SQLAlchemy or query the database directly):
+The backend (`backend/app/`) enforces strict directional **Async Route → Service → Repository** separation backed by native SQLAlchemy 2.0 **`AsyncEngine` / `AsyncSession`** (verified automatically via AST & runtime inspection tests in `backend/tests/test_architecture.py` so neither routes nor services can import SQLAlchemy, every API handler is `async def`, and all persistence runs asynchronously):
 
 ```text
 app/
 ├── api/v1/router.py          # Async HTTP Route layer: validation, dependency injection, service delegation only
-├── services/                 # Business orchestration layer: workflows, concurrency fan-out, seed data (zero SQLAlchemy)
+├── services/                 # Async business orchestration layer: workflows, concurrency fan-out, seed data (zero SQLAlchemy)
 │   ├── change_service.py     # ServiceNow sync, T-1h pre-capture, post-capture + diff + CSV/email
 │   ├── summary_service.py    # Device lookup (IP/hostname) & ad-hoc text/file summarization
 │   ├── resource_services.py  # ImportantRouteService, DeviceService, SimulatorService, SettingsService
-│   └── seed.py               # Idempotent initial demo inventory, critical routes & settings via repositories
-├── repositories/             # Persistence layer: sole owner of SQLAlchemy queries, commits & row locking
-│   ├── bundle.py             # Request-scoped RepositoryBundle (Unit of Work) & get_repositories dependency
-│   ├── change_repo.py        # ChangeRequest & CI links + FOR UPDATE SKIP LOCKED claiming
-│   ├── device_repo.py        # Network device inventory queries
-│   ├── important_route_repo.py # Pre-specified critical route CRUD
-│   ├── snapshot_repo.py      # Point-in-time RouteSnapshot persistence
-│   ├── report_repo.py        # ComparisonReport persistence & email delivery status
-│   ├── mock_snow_repo.py     # Simulated ServiceNow ticket store
-│   └── settings_repo.py      # Runtime key-value AppSetting access
+│   └── seed.py               # Idempotent initial demo inventory, critical routes & settings via async repositories
+├── repositories/             # Async persistence layer: sole owner of AsyncSession queries, commits & row locking
+│   ├── bundle.py             # Request-scoped async RepositoryBundle (Unit of Work) & get_repositories dependency
+│   ├── change_repo.py        # Async ChangeRequest & CI links + FOR UPDATE SKIP LOCKED claiming
+│   ├── device_repo.py        # Async network device inventory queries
+│   ├── important_route_repo.py # Async pre-specified critical route CRUD
+│   ├── snapshot_repo.py      # Async point-in-time RouteSnapshot persistence
+│   ├── report_repo.py        # Async ComparisonReport persistence & email delivery status
+│   ├── mock_snow_repo.py     # Async simulated ServiceNow ticket store
+│   └── settings_repo.py      # Async runtime key-value AppSetting access
 ├── pipelines/                # Pure CPU-bound domain engines (100% picklable, zero DB/HTTP coupling)
 │   ├── base.py               # PipelineStage[Ctx] ABC, PipelineRunner[Ctx], StageTrace telemetry
 │   ├── comparison/           # Feature 1: 5-stage comparison & evidence-based analysis pipeline
@@ -88,10 +90,10 @@ app/
 │   ├── servicenow/           # ServiceNowProvider ABC -> RealServiceNowProvider / MockServiceNowProvider
 │   ├── devices/              # DeviceCollector ABC -> EdgeConnect / CiscoNexus / CiscoRouter + real parsers
 │   └── email/                # Jinja2 HTML template, row-expanded CSV exporter & async SMTP sender
-├── scheduler/jobs.py         # APScheduler periodic sync & due-job dispatch loop
+├── scheduler/jobs.py         # APScheduler periodic async sync & due-job dispatch loop
 ├── models/entities.py        # SQLAlchemy 2.0 ORM schema
 ├── schemas/dto.py            # Pydantic v2 DTOs & CIDR/email validators
-└── core/                     # Typed config, domain exceptions, DB engine/session factory, concurrency primitives
+└── core/                     # Typed config, domain exceptions, AsyncEngine/AsyncSessionLocal factory, concurrency primitives
 ```
 
 ---
@@ -132,8 +134,8 @@ sequenceDiagram
     API->>Pool: run_batch(run_comparison_pipeline, all device pairs)
     Pool-->>API: Structured Reports + Stage Telemetry
     API->>DB: Persist ComparisonReports
-    API->>SMTP: Send consolidated HTML Report Email
-    SMTP-->>Eng: Report delivered to engineer mailbox
+    API->>SMTP: Send HTML Report + Row-Expanded CSV Attachment
+    SMTP-->>Eng: Report & CSV delivered to engineer mailbox
     API-->>Eng: Return reports & delivery status
 ```
 
@@ -164,9 +166,9 @@ flowchart TD
     R2 --> S4
 
     S4["Stage 4: NetworkAnalysisStage<br/>Pluggable RouteAnalyzer registry"]
-    S4 --> A1["LpmFallbackAnalyzer<br/>Checks active post-change LPM parent & egress match for removed routes"]
-    S4 --> A2["PathSelectionAnalyzer<br/>Lexicographic (AD, Metric, PP) active vs backup analysis & next-hop drift"]
-    S4 --> A3["ImpactAssessmentAnalyzer<br/>Impacted IP count & severity (CRITICAL / HIGH / MEDIUM / LOW / PASS)"]
+    S4 --> A1["LpmFallbackAnalyzer<br/>Candidate covering supernet & observable egress check"]
+    S4 --> A2["PathSelectionAnalyzer<br/>Recorded (AD, Metric, PP) tier deltas & next-hop drift"]
+    S4 --> A3["ImpactAssessmentAnalyzer<br/>Affected IP scope & internal risk metadata"]
     A1 --> S5
     A2 --> S5
     A3 --> S5
@@ -345,8 +347,8 @@ erDiagram
 - **API Integration**: Centralized typed client in [client.ts](../frontend/src/api/client.ts) talking to `/api/v1` (proxied by Vite in dev and Nginx in Docker).
 - **Views & Responsibilities**:
   1. **Change Tracking (`/`)**: ServiceNow change KPI dashboard, countdown to `T - 1h` auto-capture, one-click sync/dispatch and pre/post-capture triggers.
-  2. **Change Detail (`/changes/:id`)**: 4-step workflow progress bar, per-device `ReportViewer` instances with expandable multi-path diffs, pipeline stage telemetry inspection, and modal HTML email preview/resend.
-  3. **Ad-hoc Compare (`/adhoc-compare`)**: Drag-and-drop CSV/CLI comparison plus one-click sample CSV demonstration.
+  2. **Change Detail (`/changes/:id`)**: 4-step workflow progress bar, per-device `ReportViewer` instances with prominent `IMPORTANT` row highlighting (without subjective `Severity` columns/filters), multi-criteria filtering (`Change Type`, `Matched Rule`, `VRF`, search), color-coded prefixes & entry deltas (red removed, green added, amber changed), expandable path-level color diffs (`[-]` red removed, `[+]` green added, `[=]` muted unchanged), row-expanded CSV export (`Export CSV` / `Export Filtered CSV`), pipeline stage telemetry inspection, and modal HTML email preview/resend.
+  3. **Ad-hoc Compare (`/adhoc-compare`)**: Drag-and-drop CSV/CLI comparison plus one-click sample CSV demonstration using the shared `ReportViewer`.
   4. **Route Summary (`/route-summary`)**: Unified Feature 2 workbench supporting device lookup by IP/hostname, raw text/CLI paste, or CSV upload, expandable summary-to-subnet mapping, optional adjacent supernet suggestions, and CSV export.
   5. **Important Routes (`/important-routes`)**: Full CRUD for pre-specified critical prefixes and configurable mask threshold (`<= /20`).
   6. **ServiceNow & Devices (`/simulator`)**: Sandbox UI to create/reschedule/fast-forward simulated ServiceNow changes and inspect multi-vendor device inventory and concurrency runtime parameters.
@@ -356,8 +358,8 @@ erDiagram
 ## 10. Quality Assurance, Security & Production Hardening
 
 ### Verification & Test Coverage
-- **Backend (`uv run pytest`)**: 31 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, evidence-based covering-prefix diagnostics, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & row-expanded CSV attachments, Repository layer unit tests, AST architectural boundary enforcement (zero SQLAlchemy in routes/services & 100% async routes), and end-to-end REST API integration.
-- **Frontend (`npm test`)**: 7 Vitest + React Testing Library component and interaction suites covering `ReportViewer` (filtering, `IMPORTANT` highlighting, row-expanded CSV export), `RouteSummaryPage`, `ImportantRoutesPage`, `ChangesPage`, and `SimulatorPage`, plus strict `tsc -b` typechecking.
+- **Backend (`uv run pytest`)**: 32 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, evidence-based covering-prefix diagnostics, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & row-expanded CSV attachments, async Repository unit tests, AST & runtime architectural boundary enforcement (zero SQLAlchemy in routes/services, 100% async routes, and fully async `AsyncEngine` / `AsyncSession` database & repositories), and end-to-end REST API integration.
+- **Frontend (`npm test`)**: 8 Vitest + React Testing Library component and interaction suites covering `ReportViewer` (filtering, `IMPORTANT` highlighting, color-coded removed/added/unchanged path-entry diffs, row-expanded CSV export), `RouteSummaryPage`, `ImportantRoutesPage`, `ChangesPage`, and `SimulatorPage`, plus strict `tsc -b` typechecking.
 
 ### Production Deployment Checklist
 1. **Least-Privilege Credentials**: Use read-only API tokens/accounts for ServiceNow (`change_request`, `task_ci`, `sys_user`) and network devices (`show ip route` / read-only Orchestrator role); inject secrets via Vault/Kubernetes Secrets rather than `.env` files.

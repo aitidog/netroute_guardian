@@ -21,7 +21,7 @@ flowchart LR
     Collect -->|"RESTCONF / CLI Parser"| IOS["Cisco Routers (IOS-XE)"]
 
     Collect -->|"NormalizedRoute[]"| Pool["PipelineExecutor<br/>(ProcessPoolExecutor Workers)"]
-    Rules[("PostgreSQL<br/>Snapshots · Rules · Settings")] <--> API
+    Rules[("PostgreSQL 16<br/>Snapshots · Rules · Settings")] <-->|"AsyncEngine / AsyncSession<br/>(Repository Layer)"| API
     Rules -->|"Inject Editable Conditions"| Pool
 
     Pool -->|"Feature 1 Report + Row-Expanded CSV"| Mail["Async SMTP / Mailpit<br/>(HTML + CSV Attachment)"]
@@ -29,7 +29,7 @@ flowchart LR
 ```
 
 ### Why This Solves Real-World Operational Challenges
-1. **Strict Async Route → Service → Repository Layering**: Every FastAPI route is `async def` and delegates strictly to Services, which delegate all persistence to Repositories (`RepositoryBundle`). Automated AST tests enforce zero SQLAlchemy usage in routes/services and 100% async route handlers.
+1. **Strict Async Route → Service → Repository Layering & Native Async DB**: Every FastAPI route is `async def` and delegates strictly to Services, which delegate all persistence to Repositories (`RepositoryBundle`) running on native SQLAlchemy 2.0 **`AsyncEngine` / `AsyncSession`** (`psycopg` async for PostgreSQL, `aiosqlite` for SQLite) so database I/O never blocks the event loop. Automated tests in `backend/tests/test_architecture.py` enforce zero SQLAlchemy usage in routes/services, 100% async route handlers, and zero synchronous `Session` usage.
 2. **Reliable `T - 1h` Scheduling**: Instead of fragile in-memory timers, `capture_scheduled_at = scheduled_start - 1h` is stored in PostgreSQL. If a ServiceNow ticket is **rescheduled** or **cancelled**, the next sync tick updates or cancels the job cleanly. Claiming due jobs via `SELECT ... FOR UPDATE SKIP LOCKED` prevents duplicate collection across multiple backend replicas.
 3. **Bounded Concurrency & Fault Isolation**: Multi-CI changes poll devices concurrently via `asyncio.Semaphore` with per-device timeouts (`asyncio.wait_for`) and `return_exceptions=True`. One unreachable router never blocks or aborts sibling devices.
 4. **True Multi-Core Pipeline Execution**: Both analytical pipelines accept and return pure, picklable dataclasses (zero DB/HTTP coupling) and fan out across a `ProcessPoolExecutor`, avoiding Python GIL contention on large routing tables.
@@ -80,8 +80,8 @@ A common pitfall in automated network tools is over-claiming live forwarding beh
   - Rather than asserting live failover (which depends on device FIB & SD-WAN Business Intent Overlays), it objectively reports what changed: e.g., on `10.127.0.0/16`, the lowest recorded `(AD, Metric, PP)` increased from `50 (AD:15)` to `150 (AD:15)` (`-2 / +2 entries`); on `10.130.0.0/17`, entry count dropped `4 -> 2`; on `0.0.0.0/0`, explicit Next Hop changes occurred on `twan0` (`194.20.1.5 -> 194.20.1.1`) and `lan0` (`10.162.183.217 -> 10.162.183.230`).
 
 #### D. Dual-Granularity Reporting (`Stage 5`)
-- **Web UI & HTML Email**: Summarizes at prefix level *and* displays per-prefix entry deltas (e.g., `4 -> 0 (-4 entries)`), with multi-criteria filtering (`Change Type`, `Matched Rule`, `VRF`, search) and prominent `IMPORTANT` highlighting.
-- **CSV Export & Email Attachment**: Automatically expands diffs to **1 row per changed/removed/added route entry** (`49` diff rows for the sample dataset), with the first 5 columns (`Appliance, Subnet/Mask, Next Hop, Interface, Metric`) matching the raw EdgeConnect export 1:1 and `VRF, Protocol` placed at the end.
+- **Web UI & HTML Email**: Summarizes at prefix level *and* displays per-prefix entry deltas (e.g., `4 -> 0 (-4 entries)`), with multi-criteria filtering (`Change Type`, `Matched Rule`, `VRF`, search), prominent `IMPORTANT` row highlighting, and semantic color-coding throughout (removed prefixes/entries in **red**, added in **green**, changed prefixes in **amber**, plus expanded per-path diffs tagging `[-]` removed, `[+]` added, and `[=]` unchanged paths via exact multiset matching).
+- **CSV Export & Email Attachment**: Automatically expands diffs to **1 row per changed/removed/added route entry** (`49` diff rows for the sample dataset) across a clean 19-column schema—with the first 5 columns (`Appliance, Subnet/Mask, Next Hop, Interface, Metric`) matching the raw EdgeConnect export 1:1, `Severity` / `Affected_IPs` / `Fallback_Status` / `Fallback_Parent` omitted from CSV output, and `VRF, Protocol` placed last.
 
 ---
 
@@ -137,5 +137,5 @@ Because every business condition is injected at execution time and every analyti
 ## 5. Verification Summary
 
 All core guarantees are backed by automated test suites (`uv run pytest` and `npm test`):
-- **Backend (31 `pytest` cases, `ruff` 0 errors)**: Covers EdgeConnect CSV/JSON, Cisco NX-OS & IOS-XE parsers, exact prefix & entry conservation on the provided 4,442-row CSVs, exact-match watchlist isolation, `covering_supernet_egress_unknown` safeguard, Feature 2 mini-example & 1,765-prefix summarization, `asyncio.Semaphore` concurrency + timeout fault isolation, real `ProcessPoolExecutor` parallel batches, `T - 1h` scheduler rescheduling/cancellation, HTML email + row-expanded CSV attachments, Repository unit tests, AST layering & async-route enforcement, and full REST API integration.
-- **Frontend (7 `Vitest` + RTL cases, strict `tsc -b` build)**: Covers interactive filtering, `IMPORTANT` highlighting, row-expanded CSV export, Feature 2 device lookup & covered-subnet expansion, Important Routes CRUD, and ServiceNow Simulator flows.
+- **Backend (32 `pytest` cases, `ruff` 0 errors)**: Covers EdgeConnect CSV/JSON, Cisco NX-OS & IOS-XE parsers, exact prefix & entry conservation on the provided 4,442-row CSVs, exact-match watchlist isolation, `covering_supernet_egress_unknown` safeguard, Feature 2 mini-example & 1,765-prefix summarization, `asyncio.Semaphore` concurrency + timeout fault isolation, real `ProcessPoolExecutor` parallel batches, `T - 1h` scheduler rescheduling/cancellation, HTML email + row-expanded CSV attachments, async Repository unit tests, AST & runtime architectural enforcement (zero SQLAlchemy in routes/services, 100% async routes, fully async `AsyncEngine` / `AsyncSession` database & repositories), and full REST API integration.
+- **Frontend (8 `Vitest` + RTL cases, strict `tsc -b` build)**: Covers interactive filtering, `IMPORTANT` highlighting, color-coded removed/added/unchanged route-entry diffs, row-expanded CSV export, Feature 2 device lookup & covered-subnet expansion, Important Routes CRUD, and ServiceNow Simulator flows.

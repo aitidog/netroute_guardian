@@ -25,18 +25,23 @@ def test_parse_edgeconnect_metric_variants():
     assert parse_edgeconnect_metric("") == (None, None, None)
 
 
-def test_parse_real_edgeconnect_csv_with_bom(sample_data_dir: Path):
+def test_parse_real_edgeconnect_csv_with_bom(sample_data_dir: Path, using_synthetic_sample_data: bool):
     before_text = (sample_data_dir / "subnetsExample_beforeChange.csv").read_text(encoding="utf-8")
     routes = parse_edgeconnect_csv(before_text)
     assert len(routes) == 4442
     assert routes[0].prefix == "0.0.0.0/0"
-    assert routes[0].next_hop == "10.162.183.217"
     assert routes[0].interface == "lan0"
     assert routes[0].admin_distance == 1
     assert routes[0].metric == 50
     assert routes[0].protocol == "unknown"
-    assert routes[1].peer_priority == 5
-    assert routes[1].protocol == "unknown"
+    if using_synthetic_sample_data:
+        assert routes[0].next_hop == "10.240.0.1"
+        assert routes[2].peer_priority == 5
+        assert routes[2].protocol == "unknown"
+    else:
+        assert routes[0].next_hop == "10.162.183.217"
+        assert routes[1].peer_priority == 5
+        assert routes[1].protocol == "unknown"
 
 
 def test_parse_edgeconnect_csv_explicit_or_missing_protocol():

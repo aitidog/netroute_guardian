@@ -48,7 +48,10 @@ def test_route_summary_matches_requirement_mini_example():
     assert covered_map["172.16.2.0/24"] == ["172.16.2.128/26"]
 
 
-def test_route_summary_on_provided_after_change_csv(sample_data_dir: Path):
+def test_route_summary_on_provided_after_change_csv(
+    sample_data_dir: Path,
+    using_synthetic_sample_data: bool,
+):
     routes = [
         r.to_dict()
         for r in parse_edgeconnect_csv(
@@ -64,7 +67,7 @@ def test_route_summary_on_provided_after_change_csv(sample_data_dir: Path):
     )
 
     assert result["total_raw_entries"] == 4411
-    assert result["ignored_default_routes"] == 15
+    assert result["ignored_default_routes"] == (14 if using_synthetic_sample_data else 15)
     assert result["total_unique_prefixes"] == 1765
     assert result["output_route_count"] == 175
     assert result["summary_route_count"] == 27
@@ -73,13 +76,17 @@ def test_route_summary_on_provided_after_change_csv(sample_data_dir: Path):
     assert result["compression_ratio_pct"] > 90.0
     assert result["supernet_suggestions"] is not None
 
-    # Verify nested containment: 10.48.0.0/13 covers 10.51.0.0/16 and 10.54.0.0/16 and their children
     summary_map = {r["prefix"]: r for r in result["summary_routes"]}
-    assert "10.48.0.0/13" in summary_map
-    assert "10.51.0.0/16" in summary_map["10.48.0.0/13"]["covered_routes"]
-    assert "10.54.0.0/16" in summary_map["10.48.0.0/13"]["covered_routes"]
-    assert "10.156.0.0/16" in summary_map
-    assert summary_map["10.156.0.0/16"]["covered_count"] == 304
+    if using_synthetic_sample_data:
+        assert "10.212.0.0/16" in summary_map
+        assert summary_map["10.212.0.0/16"]["covered_count"] == 59
+    else:
+        # Verify nested containment on original local sample CSVs
+        assert "10.48.0.0/13" in summary_map
+        assert "10.51.0.0/16" in summary_map["10.48.0.0/13"]["covered_routes"]
+        assert "10.54.0.0/16" in summary_map["10.48.0.0/13"]["covered_routes"]
+        assert "10.156.0.0/16" in summary_map
+        assert summary_map["10.156.0.0/16"]["covered_count"] == 304
 
 
 def test_route_summary_isolates_vrfs_and_handles_supernet_suggestions():

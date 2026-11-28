@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -18,13 +19,34 @@ from app.services.seed import seed_initial_data
 SAMPLE_DATA_DIR = Path(__file__).resolve().parents[1] / "sample_data"
 
 
-@pytest.fixture
-def sample_data_dir() -> Path:
-    return SAMPLE_DATA_DIR
+def _has_local_sample_csvs() -> bool:
+    return (
+        (SAMPLE_DATA_DIR / "subnetsExample_beforeChange.csv").exists()
+        and (SAMPLE_DATA_DIR / "subnetsExample_afterChange.csv").exists()
+    )
+
+
+@pytest.fixture(scope="session")
+def using_synthetic_sample_data() -> bool:
+    if os.getenv("CI_SYNTHETIC_SAMPLE_DATA", "").lower() in ("1", "true", "yes"):
+        return True
+    return not _has_local_sample_csvs()
+
+
+@pytest.fixture(scope="session")
+def sample_data_dir(tmp_path_factory: pytest.TempPathFactory, using_synthetic_sample_data: bool) -> Path:
+    """Use local requirement sample CSVs when present; fall back to synthetic CSVs in CI."""
+    if not using_synthetic_sample_data:
+        return SAMPLE_DATA_DIR
+    from scripts.generate_synthetic_sample_data import write_synthetic_sample_data
+
+    synthetic_dir = tmp_path_factory.mktemp("synthetic_sample_data")
+    write_synthetic_sample_data(synthetic_dir)
+    return synthetic_dir
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(sample_data_dir: Path) -> Settings:
     return Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         servicenow_mode="mock",
@@ -33,7 +55,7 @@ def test_settings() -> Settings:
         pipeline_executor_mode="sync",
         pipeline_max_workers=2,
         max_concurrent_device_collections=4,
-        sample_data_dir=str(SAMPLE_DATA_DIR),
+        sample_data_dir=str(sample_data_dir),
     )
 
 

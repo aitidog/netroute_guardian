@@ -10,7 +10,10 @@ from app.pipelines.comparison.pipeline import run_comparison_pipeline
 from app.services.seed import DEFAULT_IMPORTANT_ROUTES
 
 
-def test_comparison_pipeline_on_provided_sample_csvs(sample_data_dir: Path):
+def test_comparison_pipeline_on_provided_sample_csvs(
+    sample_data_dir: Path,
+    using_synthetic_sample_data: bool,
+):
     before_routes = [
         r.to_dict()
         for r in parse_edgeconnect_csv(
@@ -53,53 +56,68 @@ def test_comparison_pipeline_on_provided_sample_csvs(sample_data_dir: Path):
     assert stats["total_differences"] == 14
     assert result["risk_level"] == "CRITICAL"
 
-    # Exactly 7 important entries:
-    # Removed <=/20: 10.121.0.0/16, 10.130.128.0/17, 10.132.0.0/14
-    # Removed pre-specified: 10.76.12.0/23
-    # Changed <=/20 & pre-specified: 0.0.0.0/0, 10.127.0.0/16, 10.130.0.0/17
     important_by_prefix = {e["prefix"]: e for e in result["important_entries"]}
-    assert set(important_by_prefix.keys()) == {
-        "10.121.0.0/16",
-        "10.130.128.0/17",
-        "10.132.0.0/14",
-        "10.76.12.0/23",
-        "0.0.0.0/0",
-        "10.127.0.0/16",
-        "10.130.0.0/17",
-    }
+    if using_synthetic_sample_data:
+        assert set(important_by_prefix.keys()) == {
+            "10.200.0.0/14",
+            "10.208.0.0/16",
+            "10.212.128.0/17",
+            "10.216.16.0/20",
+            "0.0.0.0/0",
+            "10.127.0.0/16",
+            "10.130.0.0/17",
+        }
+        assert important_by_prefix["10.200.0.0/14"]["fallback_status"] == "no_covering_supernet"
+        assert important_by_prefix["10.212.128.0/17"]["fallback_parent_prefix"] == "10.212.0.0/16"
+        assert (
+            important_by_prefix["10.212.128.0/17"]["fallback_status"]
+            == "covering_supernet_egress_unknown"
+        )
+        assert (
+            important_by_prefix["10.216.16.0/20"]["fallback_status"]
+            == "covering_supernet_same_next_hop"
+        )
+    else:
+        # Exactly 7 important entries on the original local sample CSVs
+        assert set(important_by_prefix.keys()) == {
+            "10.121.0.0/16",
+            "10.130.128.0/17",
+            "10.132.0.0/14",
+            "10.76.12.0/23",
+            "0.0.0.0/0",
+            "10.127.0.0/16",
+            "10.130.0.0/17",
+        }
+        assert important_by_prefix["10.132.0.0/14"]["fallback_status"] == "no_covering_supernet"
+        assert important_by_prefix["10.132.0.0/14"]["severity"] == "CRITICAL"
 
-    # Verify objective covering-prefix diagnostics on removed prefixes
-    assert important_by_prefix["10.132.0.0/14"]["fallback_status"] == "no_covering_supernet"
-    assert important_by_prefix["10.132.0.0/14"]["severity"] == "CRITICAL"
+        assert important_by_prefix["10.76.12.0/23"]["fallback_parent_prefix"] == "10.64.0.0/12"
+        assert (
+            important_by_prefix["10.76.12.0/23"]["fallback_status"]
+            == "covering_supernet_egress_unknown"
+        )
+        assert "cannot be confirmed" in important_by_prefix["10.76.12.0/23"]["explanation"]
+        assert "pre_specified_route" in important_by_prefix["10.76.12.0/23"]["matched_rules"]
 
-    # 10.76.12.0/23 has a broader candidate prefix 10.64.0.0/12, but blank Next Hop/Interface in CSV
-    # must be marked as unverifiable (covering_supernet_egress_unknown), NOT falsely "same egress".
-    assert important_by_prefix["10.76.12.0/23"]["fallback_parent_prefix"] == "10.64.0.0/12"
-    assert important_by_prefix["10.76.12.0/23"]["fallback_status"] == "covering_supernet_egress_unknown"
-    assert "cannot be confirmed" in important_by_prefix["10.76.12.0/23"]["explanation"]
-    assert "pre_specified_route" in important_by_prefix["10.76.12.0/23"]["matched_rules"]
+        assert important_by_prefix["10.127.0.0/16"]["active_path_changed"] is True
+        assert important_by_prefix["10.127.0.0/16"]["severity"] == "CRITICAL"
+        assert (
+            "Lowest recorded (AD, Metric, PP) entry increased"
+            in important_by_prefix["10.127.0.0/16"]["explanation"]
+        )
 
-    # Verify objective AD/Metric/PP change summaries on changed prefixes (no speculative failover claim)
-    assert important_by_prefix["10.127.0.0/16"]["active_path_changed"] is True
-    assert important_by_prefix["10.127.0.0/16"]["severity"] == "CRITICAL"
-    assert (
-        "Lowest recorded (AD, Metric, PP) entry increased"
-        in important_by_prefix["10.127.0.0/16"]["explanation"]
-    )
+        assert important_by_prefix["10.130.0.0/17"]["active_path_changed"] is True
+        assert (
+            "Recorded route entry count decreased from 4 to 2"
+            in important_by_prefix["10.130.0.0/17"]["explanation"]
+        )
 
-    assert important_by_prefix["10.130.0.0/17"]["active_path_changed"] is True
-    assert (
-        "Recorded route entry count decreased from 4 to 2"
-        in important_by_prefix["10.130.0.0/17"]["explanation"]
-    )
-
-    # 0.0.0.0/0 keeps lowest recorded AD:1 entry unchanged, with explicit interface next-hop changes
-    default_entry = important_by_prefix["0.0.0.0/0"]
-    assert default_entry["active_path_changed"] is False
-    assert default_entry["backup_only_changed"] is True
-    assert any("twan0" in drift for drift in default_entry["next_hop_changes"])
-    assert any("lan0" in drift for drift in default_entry["next_hop_changes"])
-    assert "policy-routed" in default_entry["explanation"]
+        default_entry = important_by_prefix["0.0.0.0/0"]
+        assert default_entry["active_path_changed"] is False
+        assert default_entry["backup_only_changed"] is True
+        assert any("twan0" in drift for drift in default_entry["next_hop_changes"])
+        assert any("lan0" in drift for drift in default_entry["next_hop_changes"])
+        assert "policy-routed" in default_entry["explanation"]
 
     # Verify pipeline stage telemetry contains all 5 single-responsibility stages
     stage_names = [s["name"] for s in result["pipeline_stages"]]

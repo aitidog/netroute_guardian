@@ -58,7 +58,10 @@ def test_important_routes_crud_and_validation(client: TestClient):
     assert dele.status_code == 204
 
 
-def test_feature1_end_to_end_change_workflow(client: TestClient):
+def test_feature1_end_to_end_change_workflow(
+    client: TestClient,
+    using_synthetic_sample_data: bool,
+):
     # 1. Sync from Mock ServiceNow
     sync_resp = client.post("/api/v1/changes/sync")
     assert sync_resp.status_code == 200
@@ -95,10 +98,11 @@ def test_feature1_end_to_end_change_workflow(client: TestClient):
     assert ec_report["summary_stats"]["removed_count"] == 10
     assert ec_report["summary_stats"]["important_count"] == 7
 
+    expected_removed_broad = "10.200.0.0/14" if using_synthetic_sample_data else "10.132.0.0/14"
     preview = client.get(f"/api/v1/reports/{ec_report['id']}/email-preview")
     assert preview.status_code == 200
     assert "CHG0042108" in preview.json()["subject"]
-    assert "10.132.0.0/14" in preview.json()["html"]
+    assert expected_removed_broad in preview.json()["html"]
     assert "route-comparison-CHG0042108.csv" in preview.json()["html"]
 
     csv_resp = client.get(f"/api/v1/reports/{ec_report['id']}/export-csv")
@@ -108,7 +112,7 @@ def test_feature1_end_to_end_change_workflow(client: TestClient):
     csv_lines = csv_resp.content.decode("utf-8-sig").strip().splitlines()
     # 1 header + 49 expanded route-entry diff rows (40 removed entries + 9 added entries; net -31)
     assert len(csv_lines) == 50
-    assert "10.132.0.0/14" in csv_resp.text
+    assert expected_removed_broad in csv_resp.text
 
 
 def test_delete_completed_change_request_and_reject_active_changes(client: TestClient):
@@ -185,7 +189,10 @@ def test_adhoc_demo_csv_and_file_upload_comparison(client: TestClient, sample_da
     assert client.get("/api/v1/sample-data/invalid").status_code == 400
 
 
-def test_feature2_route_summary_by_device_ip_hostname_text_and_demo(client: TestClient):
+def test_feature2_route_summary_by_device_ip_hostname_text_and_demo(
+    client: TestClient,
+    using_synthetic_sample_data: bool,
+):
     # Query by hostname (EdgeConnect)
     resp_host = client.post("/api/v1/route-summary/device", json={"query": "uec-abc-prd01"})
     assert resp_host.status_code == 200
@@ -193,7 +200,7 @@ def test_feature2_route_summary_by_device_ip_hostname_text_and_demo(client: Test
     assert data["output_route_count"] == 175
     assert data["summary_route_count"] == 27
     assert data["remaining_route_count"] == 148
-    assert data["ignored_default_routes"] == 15
+    assert data["ignored_default_routes"] == (14 if using_synthetic_sample_data else 15)
 
     # Query by IP address (Cisco Nexus)
     resp_ip = client.post("/api/v1/route-summary/device", json={"query": "10.0.1.11"})

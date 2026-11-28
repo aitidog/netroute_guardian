@@ -1,0 +1,157 @@
+name: CI/CD — Test & Deploy to AWS Lightsail
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-ci:
+    name: Backend (ruff + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Lint with ruff
+        run: uv run ruff check app tests scripts
+
+      - name: Run async pytest suite
+        run: uv run pytest -v
+
+  frontend-ci:
+    name: Frontend (Vitest + TypeScript build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Vitest unit tests
+        run: npm test
+
+      - name: Typecheck and build production bundle
+        run: npm run build
+
+  deploy:
+    name: Deploy to AWS Lightsail
+    needs: [backend-ci, frontend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production-lightsail-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Verify deployment secrets are configured
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::Missing required GitHub Secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY"
+            exit 1
+          fi
+
+      - name: Deploy latest main via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=15 -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s <<'REMOTE_EOF'
+            set -euo pipefail
+            cd ~/netroute_guardian
+
+            echo "=== 1. Updating repository to origin/main ==="
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "=== 2. Refreshing synthetic sample CSVs ==="
+            python3 backend/scripts/generate_synthetic_sample_data.py --output-dir deploy/sample_data
+
+            echo "=== 3. Checking production environment file ==="
+            if [ ! -f deploy/.env.prod ]; then
+              echo "ERROR: deploy/.env.prod not found on server!" >&2
+              exit 1
+            fi
+
+            echo "=== 4. Rebuilding and restarting production containers ==="
+            sudo docker compose --env-file deploy/.env.prod -f docker-compose.prod.yml up -d --build --remove-orphans
+
+            echo "=== 5. Waiting for backend health ==="
+            for i in $(seq 1 30); do
+              STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' netroute-backend 2>/dev/null || echo "starting")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "netroute-backend is healthy."
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "ERROR: netroute-backend failed to become healthy (status=$STATUS)" >&2
+                sudo docker logs --tail 50 netroute-backend
+                exit 1
+              fi
+              sleep 2
+            done
+
+            echo "=== 6. Pruning dangling Docker images ==="
+            sudo docker image prune -f
+
+            sudo docker compose --env-file deploy/.env.prod -f docker-compose.prod.yml ps
+          REMOTE_EOF
+
+      - name: Post-deploy HTTPS smoke test
+        env:
+          DEPLOY_DOMAIN: ${{ secrets.DEPLOY_DOMAIN || 'netroute.xiangyucloud.com' }}
+          DEPLOY_HEALTHCHECK_AUTH: ${{ secrets.DEPLOY_HEALTHCHECK_AUTH }}
+        run: |
+          UNAUTH=$(curl -sS -o /dev/null -w "%{http_code}" "https://${DEPLOY_DOMAIN}/")
+          echo "Unauthenticated status: ${UNAUTH}"
+          if [ "$UNAUTH" != "401" ]; then
+            echo "::error::Expected 401 on unauthenticated request, got ${UNAUTH}"
+            exit 1
+          fi
+
+          if [ -n "$DEPLOY_HEALTHCHECK_AUTH" ]; then
+            HEALTH_CODE=$(curl -sS -u "$DEPLOY_HEALTHCHECK_AUTH" -o /tmp/health.json -w "%{http_code}" "https://${DEPLOY_DOMAIN}/health")
+            echo "Authenticated /health status: ${HEALTH_CODE} ($(cat /tmp/health.json))"
+            if [ "$HEALTH_CODE" != "200" ]; then
+              echo "::error::Expected 200 on authenticated /health, got ${HEALTH_CODE}"
+              exit 1
+            fi
+          fi

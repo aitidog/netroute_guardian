@@ -11,6 +11,55 @@ permissions:
   contents: read
 
 jobs:
+  detect-changes:
+    name: Detect Deployable Changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.filter.outputs.should_deploy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual workflow_dispatch -> deploy enabled."
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Pull request -> CI only, deploy disabled."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Initial or force push without base SHA -> deploy enabled."
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Filter out documentation and non-runtime repository files
+          NON_DOC=$(echo "$CHANGED" | grep -Ev '^(doc/|.*\.md$|\.gitignore$|LICENSE$|\.github/)' || true)
+          if [ -n "$NON_DOC" ]; then
+            echo "Runtime/application files changed -> deploy enabled:"
+            echo "$NON_DOC"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs/non-runtime changes only -> skipping CD deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backend-ci:
     name: Backend (ruff + pytest)
     runs-on: ubuntu-latest
@@ -64,8 +113,11 @@ jobs:
 
   deploy:
     name: Deploy to AWS Lightsail
-    needs: [backend-ci, frontend-ci]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [detect-changes, backend-ci, frontend-ci]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      needs.detect-changes.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: production-lightsail-deploy

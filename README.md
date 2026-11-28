@@ -43,6 +43,29 @@ A full-stack web application designed to automate pre/post-change routing table 
 
 ---
 
+## Performance & Concurrency Standards
+
+Measured on a **2 vCPU (`x86_64`) / 2 GB RAM Linux** baseline via [backend/scripts/benchmark_performance.py](backend/scripts/benchmark_performance.py) (full per-stage breakdown and methodology in [doc/performance-benchmark.md](doc/performance-benchmark.md)):
+
+```mermaid
+xychart-beta
+    title "Pipeline Latency vs Route Entries (2 vCPU x86_64) — Bars: Feature 1 Compare | Line: Feature 2 Core Summary"
+    x-axis ["4.4k", "20k", "50k", "100k"]
+    y-axis "Latency (ms)" 0 --> 4000
+    bar [190, 774, 2054, 3543]
+    line [44, 379, 904, 1661]
+```
+
+| Subsystem & Workload | Target SLO | Measured (2 vCPU Baseline) | Planning Unit Ratio |
+| :--- | :--- | :--- | :--- |
+| **Concurrent Device Collection** (50 devices @ 200 ms RTT, `Semaphore=10`) | `< 2,000 ms` (cap = 10) | **1,007.1 ms** (`9.93x` vs serial) | ~50 devices/s per 10 semaphore slots |
+| **Feature 1 Comparison** (`4,442` routes) | `< 500 ms` · `< 10 MB` heap | **190.1 ms** · `2.58 MB` (`2.6x` margin) | ~350–410 ms & ~5.8 MB per 10k routes |
+| **Feature 1 Comparison** (`100,000` routes) | `< 5,000 ms` · `< 128 MB` heap | **3,543.1 ms** · `58.08 MB` | ~17 comparisons/min per vCPU @ 100k |
+| **Feature 2 Route Summary** (`4,411` routes, core) | `< 200 ms` · `< 5 MB` heap | **44.2 ms** · `1.22 MB` (`4.5x` margin) | ~165–190 ms & ~4.6 MB per 10k routes |
+| **Feature 2 Route Summary** (`100,000` routes, core) | `< 2,500 ms` · `< 96 MB` heap | **1,661.3 ms** · `46.07 MB` | ~36 summaries/min per vCPU @ 100k |
+
+---
+
 ## Preparing Sample Data (`backend/sample_data/`)
 
 > **Why isn't sample CSV data committed to Git?**  

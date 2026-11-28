@@ -20,10 +20,10 @@ const NAV_ITEMS = [
 
 export const Layout: React.FC = () => {
   return (
-    <div className="min-h-screen flex bg-slate-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-slate-800 flex items-center gap-3">
+    <div className="h-screen overflow-hidden flex bg-slate-50">
+      {/* Sidebar (pinned to viewport height; independent of right-hand content scroll) */}
+      <aside className="w-64 h-full bg-slate-900 text-slate-100 flex flex-col shrink-0 overflow-hidden">
+        <div className="shrink-0 px-5 py-5 border-b border-slate-800 flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center shadow">
             <Network className="w-5 h-5 text-white" />
           </div>
@@ -33,7 +33,7 @@ export const Layout: React.FC = () => {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
           {NAV_ITEMS.map(({ to, label, icon: Icon, subtitle }) => (
             <NavLink
               key={to}
@@ -56,7 +56,7 @@ export const Layout: React.FC = () => {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
+        <div className="shrink-0 p-4 border-t border-slate-800">
           <a
             href="http://localhost:8025"
             target="_blank"
@@ -69,8 +69,8 @@ export const Layout: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      {/* Main Content (scrolls independently within viewport) */}
+      <main className="flex-1 min-w-0 h-full overflow-y-auto">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <Outlet />
         </div>

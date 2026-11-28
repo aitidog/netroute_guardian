@@ -225,7 +225,7 @@ class NormalizedRoute:
     vrf: str = "default"         # VRF or SD-WAN Segment isolation domain
     next_hop: str = ""           # Next-hop IP (blank for SD-WAN overlay paths)
     interface: str = ""          # Outgoing interface (e.g. "lan0", "Eth1/1", "Gi0/0/0")
-    protocol: str = "unknown"    # static | bgp | ospf | connected | sdwan_overlay | local_fallback
+    protocol: str = "unknown"    # bgp | ospf | static | connected | unknown (never inferred when omitted)
     admin_distance: int | None   # Administrative Distance (e.g. 1, 15, 20, 110, 251)
     metric: int | None           # Route metric / cost
     peer_priority: int | None    # EdgeConnect SD-WAN Peer Priority (PP)
@@ -358,7 +358,7 @@ erDiagram
 ## 10. Quality Assurance, Security & Production Hardening
 
 ### Verification & Test Coverage
-- **Backend (`uv run pytest`)**: 32 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, evidence-based covering-prefix diagnostics, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & row-expanded CSV attachments, async Repository unit tests, AST & runtime architectural boundary enforcement (zero SQLAlchemy in routes/services, 100% async routes, and fully async `AsyncEngine` / `AsyncSession` database & repositories), and end-to-end REST API integration.
+- **Backend (`uv run pytest`)**: 33 automated tests covering vendor parsers (EdgeConnect CSV/JSON, NX-OS CLI/NX-API, IOS-XE CLI), all 5 Feature 1 comparison stages, exact-match critical rule isolation, evidence-based covering-prefix diagnostics, Feature 2 monotonic-stack summarization (both mini-example and 4,411-row CSV), bounded `asyncio.Semaphore` failure isolation, real `ProcessPoolExecutor` multi-process batching, scheduler `T - 1h` dynamic rescheduling/cancellation, Jinja2 HTML email rendering & row-expanded CSV attachments, async Repository unit tests, AST & runtime architectural boundary enforcement (zero SQLAlchemy in routes/services, 100% async routes, and fully async `AsyncEngine` / `AsyncSession` database & repositories), and end-to-end REST API integration.
 - **Frontend (`npm test`)**: 8 Vitest + React Testing Library component and interaction suites covering `ReportViewer` (filtering, `IMPORTANT` highlighting, color-coded removed/added/unchanged path-entry diffs, row-expanded CSV export), `RouteSummaryPage`, `ImportantRoutesPage`, `ChangesPage`, and `SimulatorPage`, plus strict `tsc -b` typechecking.
 
 ### Production Deployment Checklist

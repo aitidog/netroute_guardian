@@ -93,23 +93,6 @@ def parse_edgeconnect_metric(raw_metric: str) -> tuple[int | None, int | None, i
     return metric, ad, pp
 
 
-def infer_edgeconnect_protocol(
-    admin_distance: int | None,
-    next_hop: str,
-    interface: str,
-) -> str:
-    """Infer route protocol from EdgeConnect AD and egress attributes."""
-    if not next_hop and not interface:
-        return "sdwan_overlay"
-    if admin_distance == 1:
-        return "static"
-    if admin_distance == 0:
-        return "connected"
-    if admin_distance == 251:
-        return "local_fallback"
-    return "dynamic"
-
-
 def parse_edgeconnect_csv(csv_text: str, default_vrf: str = "default") -> list[NormalizedRoute]:
     """Parse Aruba EdgeConnect / Silver Peak Orchestrator CSV exports (handles UTF-8 BOM)."""
     cleaned_text = csv_text.lstrip("\ufeff")
@@ -133,6 +116,7 @@ def parse_edgeconnect_csv(csv_text: str, default_vrf: str = "default") -> list[N
     interface_col = header_map.get("interface")
     metric_col = header_map.get("metric")
     vrf_col = header_map.get("vrf") or header_map.get("segment")
+    protocol_col = header_map.get("protocol")
 
     routes: list[NormalizedRoute] = []
     for row in reader:
@@ -145,9 +129,10 @@ def parse_edgeconnect_csv(csv_text: str, default_vrf: str = "default") -> list[N
         raw_metric = (row.get(metric_col) or "").strip() if metric_col else ""
         appliance = (row.get(appliance_col) or "").strip() if appliance_col else ""
         vrf = ((row.get(vrf_col) or "").strip() if vrf_col else "") or default_vrf
+        raw_protocol = ((row.get(protocol_col) or "").strip().lower() if protocol_col else "")
+        protocol = raw_protocol or "unknown"
 
         metric, ad, pp = parse_edgeconnect_metric(raw_metric)
-        protocol = infer_edgeconnect_protocol(ad, next_hop, interface)
         routes.append(
             NormalizedRoute(
                 prefix=prefix,
@@ -181,6 +166,7 @@ def parse_edgeconnect_orchestrator_json(
         pp = int(item["peerPriority"]) if item.get("peerPriority") is not None else None
         next_hop = str(item.get("nexthop") or item.get("next_hop") or "").strip()
         interface = str(item.get("interface") or "").strip()
+        raw_protocol = str(item.get("protocol") or "").strip().lower()
         raw_metric_parts = []
         if ad is not None:
             raw_metric_parts.append(f"AD:{ad}")
@@ -197,7 +183,7 @@ def parse_edgeconnect_orchestrator_json(
                 vrf=str(item.get("segment") or item.get("vrf") or "default"),
                 next_hop=next_hop,
                 interface=interface,
-                protocol=str(item.get("protocol") or infer_edgeconnect_protocol(ad, next_hop, interface)),
+                protocol=raw_protocol or "unknown",
                 admin_distance=ad,
                 metric=metric,
                 peer_priority=pp,
@@ -409,7 +395,7 @@ def parse_plain_cidr_lines(raw_text: str, label: str = "") -> list[NormalizedRou
                 NormalizedRoute(
                     prefix=canonicalize_prefix(match.group(1)),
                     vrf="default",
-                    protocol="manual",
+                    protocol="unknown",
                     appliance=label,
                 )
             )

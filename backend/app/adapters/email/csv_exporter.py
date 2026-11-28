@@ -117,7 +117,7 @@ def format_comparison_reports_csv(reports: list[dict[str, Any]]) -> str:
                         f"{delta:+d}" if delta != 0 else "0",
                         explanation,
                         vrf,
-                        path.get("protocol", ""),
+                        path.get("protocol") or "unknown",
                     ]
                 )
 

@@ -72,7 +72,7 @@ const mockReport: ComparisonReport = {
           {
             next_hop: '',
             interface: '',
-            protocol: 'sdwan_overlay',
+            protocol: 'unknown',
             admin_distance: 15,
             metric: 50,
             peer_priority: null,
@@ -81,7 +81,7 @@ const mockReport: ComparisonReport = {
           {
             next_hop: '',
             interface: '',
-            protocol: 'sdwan_overlay',
+            protocol: 'unknown',
             admin_distance: 15,
             metric: 100,
             peer_priority: null,
@@ -93,7 +93,7 @@ const mockReport: ComparisonReport = {
           {
             next_hop: '',
             interface: '',
-            protocol: 'sdwan_overlay',
+            protocol: 'unknown',
             admin_distance: 15,
             metric: 50,
             peer_priority: null,
@@ -102,7 +102,7 @@ const mockReport: ComparisonReport = {
           {
             next_hop: '',
             interface: '',
-            protocol: 'sdwan_overlay',
+            protocol: 'unknown',
             admin_distance: 15,
             metric: 100,
             peer_priority: null,
@@ -139,7 +139,7 @@ const mockReport: ComparisonReport = {
           {
             next_hop: '',
             interface: '',
-            protocol: 'sdwan_overlay',
+            protocol: 'unknown',
             admin_distance: 15,
             metric: 50,
             peer_priority: null,

@@ -107,7 +107,7 @@ export function buildComparisonCsv(deviceLabel: string, rows: RouteDiffEntry[]):
           deltaText,
           item.explanation,
           item.vrf,
-          path.protocol,
+          path.protocol || 'unknown',
         ]
           .map(escapeCsvCell)
           .join(',')

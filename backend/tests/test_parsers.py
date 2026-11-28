@@ -34,8 +34,21 @@ def test_parse_real_edgeconnect_csv_with_bom(sample_data_dir: Path):
     assert routes[0].interface == "lan0"
     assert routes[0].admin_distance == 1
     assert routes[0].metric == 50
+    assert routes[0].protocol == "unknown"
     assert routes[1].peer_priority == 5
-    assert routes[1].protocol == "sdwan_overlay"
+    assert routes[1].protocol == "unknown"
+
+
+def test_parse_edgeconnect_csv_explicit_or_missing_protocol():
+    csv_text = (
+        "Appliance,Subnet/Mask,Next Hop,Interface,Metric,Protocol\n"
+        "ec-01,10.1.0.0/16,10.0.0.1,lan0,50 (AD:20),BGP\n"
+        'ec-01,10.2.0.0/16,,,"50 (AD:15, PP:5)",\n'
+    )
+    routes = parse_edgeconnect_csv(csv_text)
+    assert len(routes) == 2
+    assert routes[0].protocol == "bgp"
+    assert routes[1].protocol == "unknown"
 
 
 def test_parse_edgeconnect_orchestrator_json():
@@ -49,14 +62,25 @@ def test_parse_edgeconnect_orchestrator_json():
                 "ad": 15,
                 "peerPriority": 3,
                 "segment": "prod",
-            }
+            },
+            {
+                "prefix": "10.128.0.0/16",
+                "nexthop": "10.1.1.2",
+                "interface": "lan0",
+                "metric": 20,
+                "ad": 20,
+                "protocol": "BGP",
+            },
         ]
     }
     routes = parse_edgeconnect_orchestrator_json(payload, appliance="ec-01")
-    assert len(routes) == 1
+    assert len(routes) == 2
     assert routes[0].vrf == "prod"
     assert routes[0].admin_distance == 15
     assert routes[0].peer_priority == 3
+    assert routes[0].protocol == "unknown"
+    assert routes[1].vrf == "default"
+    assert routes[1].protocol == "bgp"
 
 
 def test_parse_cisco_nxos_cli():
@@ -118,6 +142,7 @@ def test_parse_cisco_ios_cli_including_ecmp_continuation():
 def test_auto_parse_plain_cidr_and_invalid_csv():
     routes = auto_parse_routing_text("10.1.0.0/16\n10.1.1.0/24\n# comment\n172.16.2.0/24")
     assert [r.prefix for r in routes] == ["10.1.0.0/16", "10.1.1.0/24", "172.16.2.0/24"]
+    assert all(r.protocol == "unknown" for r in routes)
 
     with pytest.raises(ValueError, match="Unsupported CSV headers"):
         parse_edgeconnect_csv("ColA,ColB\n1,2\n")

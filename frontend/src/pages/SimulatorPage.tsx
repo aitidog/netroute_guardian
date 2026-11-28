@@ -29,7 +29,8 @@ export const SimulatorPage: React.FC = () => {
       setScheduler(sched);
       setSettings(cfg);
       if (selectedDeviceIds.length === 0 && devs.length > 0) {
-        setSelectedDeviceIds(devs.slice(0, 2).map((d) => d.id));
+        const defaultDev = devs.find((d) => d.hostname === 'uec-abc-prd01') ?? devs[0];
+        setSelectedDeviceIds([defaultDev.id]);
       }
     } catch (err) {
       setFeedback({ type: 'err', text: (err as Error).message });

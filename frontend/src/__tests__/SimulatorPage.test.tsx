@@ -20,6 +20,17 @@ describe('SimulatorPage', () => {
     vi.clearAllMocks();
     vi.mocked(api.listDevices).mockResolvedValue([
       {
+        id: 2,
+        hostname: 'nx-dc1-core01',
+        ip_address: '10.0.1.11',
+        device_type: 'cisco_nexus',
+        connection_mode: 'mock',
+        location: 'DC1',
+        description: 'Cisco Nexus CLI fixture',
+        config_json: {},
+        created_at: new Date().toISOString(),
+      },
+      {
         id: 1,
         hostname: 'uec-abc-prd01',
         ip_address: '10.162.183.10',
@@ -73,10 +84,15 @@ describe('SimulatorPage', () => {
     render(<SimulatorPage />);
 
     expect(await screen.findByText(/PROCESS \(4 workers\)/i)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'uec-abc-prd01' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'nx-dc1-core01' })).not.toBeChecked();
+
     await user.click(screen.getByRole('button', { name: /Schedule Change in Mock ServiceNow/i }));
 
     await waitFor(() => {
-      expect(api.createMockSnowChange).toHaveBeenCalledTimes(1);
+      expect(api.createMockSnowChange).toHaveBeenCalledWith(
+        expect.objectContaining({ ci_device_ids: [1] })
+      );
     });
     expect(await screen.findByText(/CHG0099001/)).toBeInTheDocument();
   });

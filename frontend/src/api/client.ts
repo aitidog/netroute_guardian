@@ -40,6 +40,7 @@ export const api = {
   // Feature 1: Changes & Workflow
   listChanges: () => request<ChangeRequest[]>('/changes'),
   getChange: (id: number) => request<ChangeRequestDetail>(`/changes/${id}`),
+  deleteChange: (id: number) => request<void>(`/changes/${id}`, { method: 'DELETE' }),
   syncChanges: () => request<{ synced_count: number; chg_numbers: string[] }>('/changes/sync', { method: 'POST' }),
   triggerPreCapture: (id: number) =>
     request<{ succeeded_devices: string[]; failed_devices: Array<{ hostname: string; error: string }> }>(

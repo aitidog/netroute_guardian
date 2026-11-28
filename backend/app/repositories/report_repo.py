@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import ComparisonReport
@@ -78,3 +78,6 @@ class ReportRepository:
                 rep.email_sent_at = sent_at
         if commit:
             await self._db.commit()
+
+    async def delete_by_change_id(self, change_id: int) -> None:
+        await self._db.execute(delete(ComparisonReport).where(ComparisonReport.change_id == change_id))

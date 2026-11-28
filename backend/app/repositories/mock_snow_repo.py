@@ -76,3 +76,10 @@ class MockServiceNowRepository:
         await self._db.commit()
         await self._db.refresh(rec)
         return rec
+
+    async def mark_closed_by_chg_number(self, chg_number: str) -> None:
+        rec = await self._db.scalar(
+            select(MockServiceNowChange).where(MockServiceNowChange.chg_number == chg_number)
+        )
+        if rec is not None and rec.state != "closed":
+            rec.state = "closed"

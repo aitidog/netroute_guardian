@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Server,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
@@ -31,6 +32,7 @@ export const ChangesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChangeRequest | null>(null);
 
   const loadData = async () => {
     try {
@@ -90,6 +92,26 @@ export const ChangesPage: React.FC = () => {
       setBanner({
         type: 'ok',
         text: `Post-change comparison completed for ${chgNumber} (${res.succeeded_devices.join(', ')}). Email status: ${res.email_status}.`,
+      });
+      await loadData();
+    } catch (err) {
+      setBanner({ type: 'err', text: (err as Error).message });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setBusyAction(`delete-${target.id}`);
+    setBanner(null);
+    try {
+      await api.deleteChange(target.id);
+      setDeleteTarget(null);
+      setBanner({
+        type: 'ok',
+        text: `Deleted completed change request ${target.chg_number} and its associated comparison reports.`,
       });
       await loadData();
     } catch (err) {
@@ -271,6 +293,18 @@ export const ChangesPage: React.FC = () => {
                         Details
                         <ExternalLink className="w-3 h-3" />
                       </Link>
+                      {chg.status === 'completed' && (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${chg.chg_number}`}
+                          disabled={busyAction !== null}
+                          onClick={() => setDeleteTarget(chg)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -279,6 +313,55 @@ export const ChangesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-change-dialog-title"
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-red-50/60">
+              <h3 id="delete-change-dialog-title" className="text-base font-bold text-slate-900">
+                Delete Completed Change Request?
+              </h3>
+              <p className="text-xs text-slate-600 mt-0.5 font-mono">
+                {deleteTarget.chg_number} · {deleteTarget.title}
+              </p>
+            </div>
+            <div className="px-5 py-4 text-sm text-slate-600 space-y-2">
+              <p>
+                This will permanently remove{' '}
+                <strong className="font-mono text-slate-900">{deleteTarget.chg_number}</strong> along
+                with its {deleteTarget.pre_snapshot_count + deleteTarget.post_snapshot_count} route
+                snapshot(s) and {deleteTarget.report_count} comparison report(s).
+              </p>
+              <p className="text-xs text-slate-500">This action cannot be undone.</p>
+            </div>
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => setDeleteTarget(null)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={handleConfirmDelete}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {busyAction === `delete-${deleteTarget.id}` ? 'Deleting...' : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

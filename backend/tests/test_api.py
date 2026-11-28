@@ -111,6 +111,47 @@ def test_feature1_end_to_end_change_workflow(client: TestClient):
     assert "10.132.0.0/14" in csv_resp.text
 
 
+def test_delete_completed_change_request_and_reject_active_changes(client: TestClient):
+    # Sync initial mock ServiceNow changes
+    assert client.post("/api/v1/changes/sync").status_code == 200
+    changes = client.get("/api/v1/changes").json()
+    target = next(c for c in changes if c["chg_number"] == "CHG0042108")
+    change_id = target["id"]
+
+    # Non-existent change returns 404
+    assert client.delete("/api/v1/changes/999999").status_code == 404
+
+    # Deleting a synced (not completed) change is rejected with 400
+    bad_synced = client.delete(f"/api/v1/changes/{change_id}")
+    assert bad_synced.status_code == 400
+    assert "Only completed change requests can be deleted" in bad_synced.json()["detail"]
+
+    # Pre-captured (still not completed) change is also rejected with 400
+    assert client.post(f"/api/v1/changes/{change_id}/trigger-pre-capture").status_code == 200
+    bad_pre = client.delete(f"/api/v1/changes/{change_id}")
+    assert bad_pre.status_code == 400
+
+    # Complete the change via post-capture & comparison
+    post_resp = client.post(f"/api/v1/changes/{change_id}/trigger-post-capture")
+    assert post_resp.status_code == 200
+    report_ids = [r["id"] for r in post_resp.json()["reports_generated"]]
+    assert len(report_ids) == 2
+
+    # Delete the completed change request -> 204
+    del_resp = client.delete(f"/api/v1/changes/{change_id}")
+    assert del_resp.status_code == 204
+
+    # Change and its linked reports are gone
+    assert client.get(f"/api/v1/changes/{change_id}").status_code == 404
+    for rep_id in report_ids:
+        assert client.get(f"/api/v1/reports/{rep_id}").status_code == 404
+
+    # Subsequent ServiceNow sync must NOT resurrect the deleted completed change
+    assert client.post("/api/v1/changes/sync").status_code == 200
+    remaining = client.get("/api/v1/changes").json()
+    assert all(c["chg_number"] != "CHG0042108" for c in remaining)
+
+
 def test_adhoc_demo_csv_and_file_upload_comparison(client: TestClient, sample_data_dir: Path):
     demo_resp = client.post("/api/v1/comparisons/demo-csv")
     assert demo_resp.status_code == 200

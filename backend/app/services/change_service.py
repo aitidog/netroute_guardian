@@ -127,6 +127,24 @@ class ChangeWorkflowService:
             raise ResourceNotFoundError("Change request not found")
         return serialize_change(change, include_detail=True)
 
+    async def delete_change(self, repos: RepositoryBundle, change_id: int) -> None:
+        """Delete a completed change request along with its linked reports and snapshots."""
+        change = await repos.changes.get_by_id(change_id)
+        if change is None:
+            raise ResourceNotFoundError("Change request not found")
+        if change.status != "completed":
+            raise DomainValidationError(
+                f"Only completed change requests can be deleted (current status: '{change.status}')"
+            )
+
+        # Delete reports before snapshots to satisfy snapshot foreign keys, then remove the change.
+        await repos.reports.delete_by_change_id(change.id)
+        await repos.snapshots.delete_by_change_id(change.id)
+        if change.sync_source == "mock":
+            await repos.mock_servicenow.mark_closed_by_chg_number(change.chg_number)
+        await repos.changes.delete(change, commit=False)
+        await repos.commit()
+
     async def sync_from_servicenow(
         self,
         repos: RepositoryBundle,
@@ -154,7 +172,7 @@ class ChangeWorkflowService:
             existing = await repos.changes.get_by_chg_number_with_links(dto.chg_number)
 
             if existing is None:
-                if dto.state == "cancelled":
+                if dto.state in ("cancelled", "closed"):
                     continue
                 change = await repos.changes.create(
                     chg_number=dto.chg_number,

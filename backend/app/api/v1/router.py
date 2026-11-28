@@ -89,6 +89,19 @@ async def get_change(
     return await service.get_change_detail(repos, change_id)
 
 
+@router.delete(
+    "/changes/{change_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Changes"],
+)
+async def delete_change(
+    change_id: int,
+    repos: RepositoryBundle = Depends(get_repositories),
+    service: ChangeWorkflowService = Depends(_get_change_service),
+) -> None:
+    await service.delete_change(repos, change_id)
+
+
 @router.post("/changes/sync", tags=["Changes"])
 async def sync_servicenow_changes(
     request: Request,

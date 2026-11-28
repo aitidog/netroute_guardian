@@ -35,6 +35,8 @@ class MockServiceNowProvider(ServiceNowProvider):
         we = _ensure_utc(window_end)
 
         for rec in records:
+            if rec.state == "closed":
+                continue
             start_utc = _ensure_utc(rec.scheduled_start)
             # Include cancelled changes so already-synced platform jobs get cancelled.
             if rec.state == "cancelled" or (ws <= start_utc <= we):

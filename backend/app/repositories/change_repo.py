@@ -154,3 +154,8 @@ class ChangeRequestRepository:
         return await self._db.scalar(
             select(func.min(ChangeRequest.capture_scheduled_at)).where(ChangeRequest.status == status)
         )
+
+    async def delete(self, change: ChangeRequest, *, commit: bool = False) -> None:
+        await self._db.delete(change)
+        if commit:
+            await self._db.commit()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import RouteSnapshot
@@ -60,3 +60,6 @@ class SnapshotRepository:
             if snap.device_id is not None and snap.device_id not in by_device:
                 by_device[snap.device_id] = snap
         return by_device
+
+    async def delete_by_change_id(self, change_id: int) -> None:
+        await self._db.execute(delete(RouteSnapshot).where(RouteSnapshot.change_id == change_id))

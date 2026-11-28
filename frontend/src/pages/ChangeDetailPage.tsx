@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Mail, Play, Server, X } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, Mail, Play, Server, Trash2, X } from 'lucide-react';
 import { api } from '../api/client';
 import { ReportViewer } from '../components/ReportViewer';
 import { StatusBadge } from '../components/StatusBadge';
@@ -8,12 +8,14 @@ import type { ChangeRequestDetail } from '../types';
 
 export const ChangeDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const changeId = Number(id);
   const [detail, setDetail] = useState<ChangeRequestDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [emailModal, setEmailModal] = useState<{ subject: string; html: string } | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -95,6 +97,19 @@ export const ChangeDetailPage: React.FC = () => {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    setBusy('delete');
+    setMessage(null);
+    try {
+      await api.deleteChange(changeId);
+      navigate('/');
+    } catch (err) {
+      setConfirmDeleteOpen(false);
+      setMessage({ type: 'err', text: (err as Error).message });
+      setBusy(null);
+    }
+  };
+
   if (loading) {
     return <div className="p-8 text-sm text-slate-500">Loading change details...</div>;
   }
@@ -146,6 +161,17 @@ export const ChangeDetailPage: React.FC = () => {
             <Play className="w-4 h-4" />
             {busy === 'post' ? 'Comparing...' : 'Trigger Post-Change & Send Report'}
           </button>
+          {detail.status === 'completed' && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => setConfirmDeleteOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Request
+            </button>
+          )}
         </div>
       </div>
 
@@ -235,6 +261,55 @@ export const ChangeDetailPage: React.FC = () => {
           ))
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-detail-dialog-title"
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-red-50/60">
+              <h3 id="delete-detail-dialog-title" className="text-base font-bold text-slate-900">
+                Delete Completed Change Request?
+              </h3>
+              <p className="text-xs text-slate-600 mt-0.5 font-mono">
+                {detail.chg_number} · {detail.title}
+              </p>
+            </div>
+            <div className="px-5 py-4 text-sm text-slate-600 space-y-2">
+              <p>
+                This will permanently remove{' '}
+                <strong className="font-mono text-slate-900">{detail.chg_number}</strong> along with
+                its {detail.snapshots.length} route snapshot(s) and {detail.reports.length}{' '}
+                comparison report(s).
+              </p>
+              <p className="text-xs text-slate-500">This action cannot be undone.</p>
+            </div>
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => setConfirmDeleteOpen(false)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={handleConfirmDelete}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {busy === 'delete' ? 'Deleting...' : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Email Preview Modal */}
       {emailModal && (

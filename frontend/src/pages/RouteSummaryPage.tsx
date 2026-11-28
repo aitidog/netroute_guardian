@@ -133,15 +133,25 @@ export const RouteSummaryPage: React.FC = () => {
             Identify existing summary routes that cover more-specific prefixes and list remaining unsummarizable routes (ignoring 0.0.0.0/0).
           </p>
         </div>
-        <button
-          type="button"
-          disabled={loading}
-          onClick={handleDemoCsv}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
-        >
-          <Sparkles className="w-4 h-4" />
-          Run Demo (afterChange.csv)
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/api/v1/sample-data/after"
+            download="subnetsExample_afterChange.csv"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Sample CSV
+          </a>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleDemoCsv}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" />
+            Run Demo (afterChange.csv)
+          </button>
+        </div>
       </div>
 
       {/* Mode Switcher + Input Form */}

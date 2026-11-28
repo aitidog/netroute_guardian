@@ -18,7 +18,27 @@ const NAV_ITEMS = [
   { to: '/simulator', label: 'ServiceNow & Devices', icon: Server, subtitle: 'Sandbox & Scheduler' },
 ];
 
+function resolveMailpitUrl(): { href: string; label: string } {
+  const configured = import.meta.env.VITE_MAILPIT_URL as string | undefined;
+  if (configured && configured.trim()) {
+    const trimmed = configured.trim();
+    return {
+      href: trimmed,
+      label: trimmed.includes(':8025') ? 'Open Mailpit Inbox (:8025)' : 'Open Mailpit Inbox',
+    };
+  }
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return { href: '/mailpit/', label: 'Open Mailpit Inbox' };
+  }
+  return { href: 'http://localhost:8025', label: 'Open Mailpit Inbox (:8025)' };
+}
+
 export const Layout: React.FC = () => {
+  const mailpit = resolveMailpitUrl();
   return (
     <div className="h-screen overflow-hidden flex bg-slate-50">
       {/* Sidebar (pinned to viewport height; independent of right-hand content scroll) */}
@@ -58,13 +78,13 @@ export const Layout: React.FC = () => {
 
         <div className="shrink-0 p-4 border-t border-slate-800">
           <a
-            href="http://localhost:8025"
+            href={mailpit.href}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
           >
             <Mail className="w-3.5 h-3.5 text-emerald-400" />
-            Open Mailpit Inbox (:8025)
+            {mailpit.label}
           </a>
         </div>
       </aside>

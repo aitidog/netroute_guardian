@@ -59,7 +59,7 @@ def create_app(
         pipeline_executor=pipeline_executor,
     )
     important_route_service = ImportantRouteService()
-    device_service = DeviceService()
+    device_service = DeviceService(settings=active_settings)
     simulator_service = SimulatorService(change_service=change_service)
     settings_service = SettingsService(settings=active_settings)
 

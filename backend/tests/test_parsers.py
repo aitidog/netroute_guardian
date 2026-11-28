@@ -146,3 +146,47 @@ def test_auto_parse_plain_cidr_and_invalid_csv():
 
     with pytest.raises(ValueError, match="Unsupported CSV headers"):
         parse_edgeconnect_csv("ColA,ColB\n1,2\n")
+
+
+def test_synthetic_sample_data_generator_matches_scale_and_pipelines():
+    from app.pipelines.comparison.context import ComparisonInput
+    from app.pipelines.comparison.pipeline import run_comparison_pipeline
+    from app.pipelines.summary.context import SummaryInput
+    from app.pipelines.summary.pipeline import run_summary_pipeline
+    from scripts.generate_synthetic_sample_data import build_synthetic_csv_pair
+
+    before_csv, after_csv = build_synthetic_csv_pair()
+    before_routes = parse_edgeconnect_csv(before_csv)
+    after_routes = parse_edgeconnect_csv(after_csv)
+
+    assert len(before_routes) == 4442
+    assert len(after_routes) == 4411
+
+    comp = run_comparison_pipeline(
+        ComparisonInput(
+            device_label="uec-abc-prd01",
+            before_routes=[r.to_dict() for r in before_routes],
+            after_routes=[r.to_dict() for r in after_routes],
+            important_prefixes=["0.0.0.0/0", "10.76.12.0/23", "10.127.0.0/16", "10.130.0.0/17"],
+            large_prefix_threshold=20,
+        )
+    )
+    stats = comp["summary_stats"]
+    assert stats["before_unique_prefixes"] == 1775
+    assert stats["after_unique_prefixes"] == 1766
+    assert stats["removed_count"] == 10
+    assert stats["added_count"] == 1
+    assert stats["changed_count"] == 3
+    assert stats["important_count"] == 7
+    assert stats["net_entry_delta"] == -31
+
+    summ = run_summary_pipeline(
+        SummaryInput(
+            source_label="synthetic_after.csv",
+            routes=[r.to_dict() for r in after_routes],
+        )
+    )
+    assert summ["total_unique_prefixes"] == 1765
+    assert summ["output_route_count"] == 175
+    assert summ["summary_route_count"] == 27
+    assert summ["remaining_route_count"] == 148

@@ -171,6 +171,19 @@ def test_adhoc_demo_csv_and_file_upload_comparison(client: TestClient, sample_da
     assert upload_resp.json()["device_label"] == "uploaded-ec-01"
     assert upload_resp.json()["summary_stats"]["important_count"] == 7
 
+    # Remote sample CSV download endpoints for independent verification
+    dl_before = client.get("/api/v1/sample-data/before")
+    assert dl_before.status_code == 200
+    assert "subnetsExample_beforeChange.csv" in dl_before.headers["content-disposition"]
+    assert dl_before.content == before_bytes
+
+    dl_after = client.get("/api/v1/sample-data/after")
+    assert dl_after.status_code == 200
+    assert "subnetsExample_afterChange.csv" in dl_after.headers["content-disposition"]
+    assert dl_after.content == after_bytes
+
+    assert client.get("/api/v1/sample-data/invalid").status_code == 400
+
 
 def test_feature2_route_summary_by_device_ip_hostname_text_and_demo(client: TestClient):
     # Query by hostname (EdgeConnect)

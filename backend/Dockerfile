@@ -13,6 +13,7 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
 COPY app ./app
+RUN mkdir -p /app/sample_data
 COPY sample_data ./sample_data
 
 EXPOSE 8000

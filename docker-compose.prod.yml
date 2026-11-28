@@ -1,0 +1,106 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: netroute-caddy
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      frontend:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    environment:
+      DOMAIN: ${DOMAIN:-netroute.xiangyucloud.com}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-reviewer}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?BASIC_AUTH_HASH is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: netroute-postgres
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-route_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-route_table_mgm}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-route_user} -d ${POSTGRES_DB:-route_table_mgm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: netroute-mailpit
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MP_WEBROOT: /mailpit
+      MP_MAX_MESSAGES: "200"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: netroute-backend
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-route_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-route_table_mgm}
+      SERVICENOW_MODE: mock
+      DEMO_DISABLE_LIVE_DEVICES: "true"
+      SCHEDULER_ENABLED: "true"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MAILPIT_WEB_URL: https://${DOMAIN:-netroute.xiangyucloud.com}/mailpit/
+      CORS_ORIGINS: '["https://${DOMAIN:-netroute.xiangyucloud.com}"]'
+      MAX_CONCURRENT_DEVICE_COLLECTIONS: "10"
+      PIPELINE_EXECUTOR_MODE: process
+      PIPELINE_MAX_WORKERS: ${PIPELINE_MAX_WORKERS:-2}
+    volumes:
+      - ./deploy/sample_data:/app/sample_data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_MAILPIT_URL: /mailpit/
+    container_name: netroute-frontend
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,25 @@
+{$DOMAIN:netroute.xiangyucloud.com} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    basic_auth {
+        {$BASIC_AUTH_USER:reviewer} {$BASIC_AUTH_HASH}
+    }
+
+    # Same-origin Mailpit Web UI (protected by the same HTTPS + Basic Auth gate)
+    handle /mailpit* {
+        reverse_proxy mailpit:8025
+    }
+
+    # Frontend SPA + /api/ + /health (served by frontend Nginx container)
+    handle {
+        reverse_proxy frontend:80
+    }
+}

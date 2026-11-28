@@ -5,6 +5,8 @@ COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 
 COPY . .
+ARG VITE_MAILPIT_URL=http://localhost:8025
+ENV VITE_MAILPIT_URL=$VITE_MAILPIT_URL
 RUN npm run build
 
 FROM nginx:1.27-alpine

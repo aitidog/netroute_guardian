@@ -218,6 +218,19 @@ async def compare_demo_csv(
     return await service.compare_demo_csv(repos)
 
 
+@router.get("/sample-data/{phase}", tags=["Sample Data"])
+async def download_sample_csv(
+    phase: str,
+    service: ChangeWorkflowService = Depends(_get_change_service),
+) -> Response:
+    filename, content = await service.get_sample_csv(phase)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Feature 1: Important Pre-Specified Routes CRUD
 # ---------------------------------------------------------------------------

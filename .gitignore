@@ -17,6 +17,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!deploy/.env.prod.example
 
 # =============================================================================
 # Python / uv / pytest / ruff (Backend)
@@ -63,3 +64,4 @@ docker-compose.override.yml
 # =============================================================================
 requirements/
 backend/sample_data/*.csv
+deploy/sample_data/*.csv

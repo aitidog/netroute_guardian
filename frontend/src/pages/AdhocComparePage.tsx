@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileDiff, Sparkles, Upload } from 'lucide-react';
+import { Download, FileDiff, Sparkles, Upload } from 'lucide-react';
 import { api } from '../api/client';
 import { ReportViewer } from '../components/ReportViewer';
 import type { ComparisonReport } from '../types';
@@ -52,15 +52,33 @@ export const AdhocComparePage: React.FC = () => {
             Upload any two routing tables (EdgeConnect CSV, Cisco NX-OS, or IOS-XE) or run the built-in requirement sample files.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={loading}
-          onClick={handleDemoCompare}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
-        >
-          <Sparkles className="w-4 h-4" />
-          {loading ? 'Analyzing...' : 'Run Sample CSV Demo (before vs after)'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/api/v1/sample-data/before"
+            download="subnetsExample_beforeChange.csv"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Before CSV
+          </a>
+          <a
+            href="/api/v1/sample-data/after"
+            download="subnetsExample_afterChange.csv"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download After CSV
+          </a>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleDemoCompare}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" />
+            {loading ? 'Analyzing...' : 'Run Sample CSV Demo (before vs after)'}
+          </button>
+        </div>
       </div>
 
       {error && (

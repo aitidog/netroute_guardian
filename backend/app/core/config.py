@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Sample data directory for EdgeConnect CSV demo fixtures
     sample_data_dir: str = str(Path(__file__).resolve().parents[2] / "sample_data")
 
+    # Safety toggle for public demo deployments (prevents creating live-mode devices for outbound probes)
+    demo_disable_live_devices: bool = False
+
     # CORS origins for local Vite dev server and Docker frontend
     cors_origins: list[str] = [
         "http://localhost:5173",

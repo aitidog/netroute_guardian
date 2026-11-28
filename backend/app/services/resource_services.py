@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import Settings
+from app.core.exceptions import DomainValidationError
 from app.models.entities import Device, ImportantRoute, MockServiceNowChange
 from app.repositories.bundle import RepositoryBundle
 from app.schemas.dto import (
@@ -52,10 +53,21 @@ class ImportantRouteService:
 class DeviceService:
     """Business service for managed network device inventory."""
 
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings
+
     async def list_devices(self, repos: RepositoryBundle) -> list[Device]:
         return await repos.devices.list_all()
 
     async def create_device(self, repos: RepositoryBundle, payload: DeviceCreate) -> Device:
+        if (
+            self._settings is not None
+            and self._settings.demo_disable_live_devices
+            and payload.connection_mode == "live"
+        ):
+            raise DomainValidationError(
+                "Live device creation is disabled in public demo mode; use connection_mode='mock'."
+            )
         return await repos.devices.create(**payload.model_dump(), commit=True)
 
 

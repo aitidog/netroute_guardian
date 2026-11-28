@@ -482,6 +482,20 @@ class ChangeWorkflowService:
             after_routes=after_routes,
         )
 
+    async def get_sample_csv(self, phase: str) -> tuple[str, bytes]:
+        """Return the active sample EdgeConnect CSV file bytes for remote verification/comparison."""
+        filename_map = {
+            "before": "subnetsExample_beforeChange.csv",
+            "after": "subnetsExample_afterChange.csv",
+        }
+        filename = filename_map.get(phase.lower())
+        if filename is None:
+            raise DomainValidationError("Sample phase must be 'before' or 'after'")
+        file_path = Path(self.settings.sample_data_dir) / filename
+        if not file_path.exists():
+            raise ResourceNotFoundError(f"Sample CSV '{filename}' not found on server")
+        return filename, file_path.read_bytes()
+
     async def compare_demo_csv(self, repos: RepositoryBundle) -> ComparisonReport:
         sample_dir = Path(self.settings.sample_data_dir)
         before_path = sample_dir / "subnetsExample_beforeChange.csv"

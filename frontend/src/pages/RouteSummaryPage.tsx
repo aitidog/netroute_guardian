@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   GitBranch,
+  Layers,
   Search,
   Sparkles,
   Upload,
@@ -31,6 +32,7 @@ export const RouteSummaryPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'all' | 'summary' | 'remaining'>('all');
   const [searchFilter, setSearchFilter] = useState('');
   const [expandedPrefix, setExpandedPrefix] = useState<string | null>(null);
+  const [showPipeline, setShowPipeline] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -387,7 +389,17 @@ export const RouteSummaryPage: React.FC = () => {
                 ))}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {result.pipeline_stages && result.pipeline_stages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPipeline((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/60"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    {showPipeline ? 'Hide Pipeline Telemetry' : 'Inspect Pipeline Stages'}
+                  </button>
+                )}
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                   <input
@@ -408,6 +420,31 @@ export const RouteSummaryPage: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Optional Pipeline Stage Telemetry */}
+            {showPipeline && result.pipeline_stages && result.pipeline_stages.length > 0 && (
+              <div className="px-5 py-3 bg-indigo-50/50 border-b border-indigo-100">
+                <div className="text-xs font-semibold text-indigo-900 mb-2">
+                  Single-Responsibility Pipeline Execution Trace
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  {result.pipeline_stages.map((st, idx) => (
+                    <div
+                      key={st.name}
+                      className="bg-white rounded-lg p-2.5 border border-indigo-100 text-xs"
+                    >
+                      <div className="font-semibold text-indigo-700">
+                        {idx + 1}. {st.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{st.description}</div>
+                      <div className="text-[11px] font-mono text-slate-700 mt-1">
+                        {st.duration_ms} ms
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">

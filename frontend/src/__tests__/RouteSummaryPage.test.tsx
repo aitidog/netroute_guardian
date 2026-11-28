@@ -97,7 +97,32 @@ const mockSummary: RouteSummaryResponse = {
     },
   ],
   supernet_suggestions: null,
-  pipeline_stages: [],
+  pipeline_stages: [
+    {
+      name: 'filter_normalize',
+      description: 'Exclude default routes (0.0.0.0/0), canonicalize CIDRs, and deduplicate per VRF.',
+      duration_ms: 1.24,
+      details: { unique_non_default_prefixes: 7 },
+    },
+    {
+      name: 'prefix_collapse',
+      description: 'Retain broadest existing covering prefixes and fold covered sub-prefixes via monotonic stack.',
+      duration_ms: 0.85,
+      details: { retained_output_routes: 4, covered_more_specific_routes: 3 },
+    },
+    {
+      name: 'supernet_suggestions',
+      description: 'Optionally compute adjacent CIDR supernet aggregation suggestions via collapse_addresses.',
+      duration_ms: 0.01,
+      details: { enabled: false },
+    },
+    {
+      name: 'summary_format',
+      description: 'Partition retained routes into summary and remaining lists with compression metrics.',
+      duration_ms: 0.12,
+      details: { summary_routes: 2, remaining_routes: 2 },
+    },
+  ],
 };
 
 describe('RouteSummaryPage', () => {
@@ -124,5 +149,15 @@ describe('RouteSummaryPage', () => {
     await user.click(screen.getByText('10.1.0.0/16'));
     expect(screen.getByText('10.1.1.0/24')).toBeInTheDocument();
     expect(screen.getByText('10.1.5.0/25')).toBeInTheDocument();
+
+    // Toggle pipeline stage telemetry panel
+    await user.click(screen.getByRole('button', { name: /Inspect Pipeline Stages/i }));
+    expect(screen.getByText(/Single-Responsibility Pipeline Execution Trace/i)).toBeInTheDocument();
+    expect(screen.getByText('1. filter_normalize')).toBeInTheDocument();
+    expect(screen.getByText('2. prefix_collapse')).toBeInTheDocument();
+    expect(screen.getByText('1.24 ms')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Hide Pipeline Telemetry/i }));
+    expect(screen.queryByText('1. filter_normalize')).not.toBeInTheDocument();
   });
 });

@@ -123,9 +123,14 @@ flowchart TD
 - **Presentation Separation**: `severity` and `risk_level` remain populated internally in the pipeline payload for deterministic ordering and programmatic consumers, while the **Web UI (`ReportViewer.tsx`), HTML email template (`comparison_report.html`), and 19-column CSV export (`csv_exporter.py`) intentionally omit `Severity` display/columns** in favor of prominent `IMPORTANT` row highlighting and color-coded route-entry diffs (`[-]` red removed, `[+]` green added, `[=]` muted unchanged).
 
 #### Stage 5: `ReportAssemblyStage` ([stages.py](../backend/app/pipelines/comparison/stages.py))
-- **Single Responsibility**: Synthesize human-readable explanations, sort entries deterministically, compute both prefix-level and entry-level counts (`removed_prefix_entries_count`, `added_prefix_entries_count`, `changed_removed_entries_count`, `changed_added_entries_count`, `net_entry_delta`), build `summary_stats` & `executive_summary`, and emit `report_payload` consumed uniformly by the React UI, Jinja2 HTML email renderer, and row-expanded CSV exporter (`Appliance, Subnet/Mask, Next Hop, Interface, Metric, ..., VRF, Protocol`).
+- **Single Responsibility**: Synthesize human-readable explanations, sort entries deterministically, compute both prefix-level and entry-level counts (`removed_prefix_entries_count`, `added_prefix_entries_count`, `changed_removed_entries_count`, `changed_added_entries_count`, `net_entry_delta`), build `summary_stats` & `executive_summary`, and emit `report_payload` consumed uniformly by the React UI, Jinja2 HTML email renderer, and row-expanded CSV exporter:
+  - **Web UI & HTML Email**: Summarizes at prefix level *and* displays per-prefix entry deltas (e.g., `4 -> 0 (-4 entries)`), with multi-criteria filtering (`Change Type`, `Matched Rule`, `VRF`, search), prominent `IMPORTANT` row highlighting, and semantic color-coding throughout (removed in **red**, added in **green**, changed prefixes in **amber**, plus expanded per-path diffs tagging `[-]` removed, `[+]` added, and `[=]` unchanged paths via exact multiset matching).
+  - **19-Column Row-Expanded CSV**: Expands diffs to 1 row per changed/removed/added route entry—with the first 5 columns (`Appliance, Subnet/Mask, Next Hop, Interface, Metric`) matching raw EdgeConnect exports 1:1 and `VRF, Protocol` placed last.
+- **Verified Accounting on Reference Sample Dataset (`uec-abc-prd01`)**:
+  - **Prefix granularity**: `1,775` before − `10` removed + `1` added = `1,766` after (net `−9`), plus `3` changed prefixes (`14` total prefix diffs; `7` flagged `IMPORTANT`).
+  - **Entry (row) granularity**: `4,442` before − `40` removed entries (`32` from removed prefixes + `8` from changed prefixes) + `9` added entries (`3` from added prefix + `6` from changed prefixes) = `4,411` after (net `−31`; `49` expanded CSV rows). Every single row reconciles with zero loss.
 
-> Performance Note: On the 4,442-row reference EdgeConnect dataset, the entire 5-stage pipeline executes in **< 15 ms** per device. If a fleet ever processes full Internet DFZ tables, `LpmFallbackAnalyzer`'s internal prefix index can be swapped to a Radix Trie without changing its interface or any other stage.
+> Performance Note: On the 4,442-row reference dataset, the 5-stage pipeline completes in **190.1 ms** (`2.58 MB` peak heap) on a 2 vCPU `x86_64` baseline (see [performance-benchmark.md](performance-benchmark.md) for full `4.4k -> 100k` scaling measurements). If a fleet ever processes full Internet DFZ tables, `LpmFallbackAnalyzer`'s internal prefix index can be swapped to a Radix Trie without changing its interface or any other stage.
 
 ---
 
@@ -188,6 +193,9 @@ Input (after `FilterNormalizeStage` drops `0.0.0.0/0`):
 - **Summary Routes** (`covered_count > 0`): `10.1.0.0/16` (covers 2), `172.16.2.0/24` (covers 1)
 - **Remaining Routes** (`covered_count == 0`): `10.2.2.0/26`, `192.168.8.0/26`
 - **All Output Routes**: `10.1.0.0/16`, `10.2.2.0/26`, `172.16.2.0/24`, `192.168.8.0/26`
+
+- **Verified Results on Reference `subnetsExample_afterChange.csv`**:
+  - `4,411` raw rows (`15` default route `0.0.0.0/0` entries ignored) -> `1,765` unique non-default prefixes -> **`175` output routes** (**`27` summary routes** covering `1,590` specific subnets + **`148` remaining routes**, **`90.08%` reduction**).
 
 #### Why Sorted Monotonic Stack Instead of a Hand-Written Binary Trie?
 - **Speed & Memory in CPython**: Timsort runs in optimized C; avoiding 32 Python heap-allocated `TrieNode` objects per prefix reduces memory footprint by an order of magnitude and runs faster for $10^3\text{–}10^5$ routes.

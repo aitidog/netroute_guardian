@@ -3,7 +3,6 @@
 A full-stack web application designed to automate pre/post-change routing table verification with ServiceNow integration (**Feature 1**) and perform optimal prefix summarization across multi-vendor network devices (**Feature 2**).
 
 > **Documentation**:
-> - [Solution Design Proposal (Concise Overview)](doc/design-proposal.md)
 > - [System Architecture & Deployment Design](doc/architecture.md)
 > - [Pipeline Design, Algorithms, Extensibility & Configurable Conditions](doc/pipeline-design.md)
 > - [Device Collection & Pipeline Performance Report](doc/performance-benchmark.md)

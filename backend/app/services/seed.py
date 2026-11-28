@@ -88,37 +88,33 @@ async def seed_initial_data(repos: RepositoryBundle, settings: Settings) -> None
     if not await repos.mock_servicenow.has_any():
         now = datetime.now(UTC)
         ec_id = device_ids_by_host["uec-abc-prd01"]
-        nx_id = device_ids_by_host["nx-dc1-core01"]
-        rtr_id = device_ids_by_host["rtr-hq-wan01"]
 
         await repos.mock_servicenow.create(
             chg_number="CHG0042108",
-            title="SD-WAN Hub & Core BGP Route Policy Cutover",
+            title="SD-WAN Hub Route Policy Cutover (uec-abc-prd01)",
             description=(
-                "Scheduled WAN routing policy update across Aruba EdgeConnect hub "
-                "uec-abc-prd01 and DC1 Cisco Nexus core nx-dc1-core01."
+                "Scheduled WAN routing policy update on Aruba EdgeConnect hub uec-abc-prd01."
             ),
             scheduled_start=now + timedelta(minutes=45),
             scheduled_end=now + timedelta(hours=2, minutes=45),
             engineer_name="Alex Rivera",
             engineer_email="alex.rivera@netops.local",
             state="scheduled",
-            ci_device_ids=[ec_id, nx_id],
+            ci_device_ids=[ec_id],
             commit=False,
         )
         await repos.mock_servicenow.create(
             chg_number="CHG0042115",
-            title="HQ WAN Router BGP Local-Pref & Failover Maintenance",
+            title="SD-WAN Hub BGP Preference Maintenance (uec-abc-prd01)",
             description=(
-                "Planned BGP preference maintenance on HQ border router rtr-hq-wan01 "
-                "and EdgeConnect hub uec-abc-prd01."
+                "Planned routing preference maintenance on Aruba EdgeConnect hub uec-abc-prd01."
             ),
             scheduled_start=now + timedelta(hours=4),
             scheduled_end=now + timedelta(hours=6),
             engineer_name="Jordan Chen",
             engineer_email="jordan.chen@netops.local",
             state="scheduled",
-            ci_device_ids=[rtr_id, ec_id],
+            ci_device_ids=[ec_id],
             commit=False,
         )
 

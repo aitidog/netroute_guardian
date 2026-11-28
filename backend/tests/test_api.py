@@ -75,23 +75,23 @@ def test_feature1_end_to_end_change_workflow(
     premature = client.post(f"/api/v1/changes/{change_id}/trigger-post-capture")
     assert premature.status_code == 400
 
-    # 2. Trigger pre-change capture (collects EdgeConnect + Cisco Nexus concurrently)
+    # 2. Trigger pre-change capture (collects EdgeConnect uec-abc-prd01)
     pre_resp = client.post(f"/api/v1/changes/{change_id}/trigger-pre-capture")
     assert pre_resp.status_code == 200
     pre_data = pre_resp.json()
-    assert set(pre_data["succeeded_devices"]) == {"uec-abc-prd01", "nx-dc1-core01"}
+    assert set(pre_data["succeeded_devices"]) == {"uec-abc-prd01"}
     assert pre_data["failed_devices"] == []
 
     # 3. Trigger post-change capture & parallel comparison
     post_resp = client.post(f"/api/v1/changes/{change_id}/trigger-post-capture")
     assert post_resp.status_code == 200
     post_data = post_resp.json()
-    assert len(post_data["reports_generated"]) == 2
+    assert len(post_data["reports_generated"]) == 1
 
     # 4. Inspect change detail & email preview
     detail = client.get(f"/api/v1/changes/{change_id}").json()
     assert detail["status"] == "completed"
-    assert len(detail["reports"]) == 2
+    assert len(detail["reports"]) == 1
 
     ec_report = next(r for r in detail["reports"] if r["device_label"] == "uec-abc-prd01")
     assert ec_report["risk_level"] == "CRITICAL"
@@ -139,7 +139,7 @@ def test_delete_completed_change_request_and_reject_active_changes(client: TestC
     post_resp = client.post(f"/api/v1/changes/{change_id}/trigger-post-capture")
     assert post_resp.status_code == 200
     report_ids = [r["id"] for r in post_resp.json()["reports_generated"]]
-    assert len(report_ids) == 2
+    assert len(report_ids) == 1
 
     # Delete the completed change request -> 204
     del_resp = client.delete(f"/api/v1/changes/{change_id}")

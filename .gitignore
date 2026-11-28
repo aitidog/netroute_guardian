@@ -18,6 +18,7 @@ Thumbs.db
 .env.*
 !.env.example
 !deploy/.env.prod.example
+deploy/demo-credentials.local.txt
 
 # =============================================================================
 # Python / uv / pytest / ruff (Backend)
